@@ -405,7 +405,7 @@ elif page == "Analyse clients":
                     elif v < 5: return "color:#fd7e14"
                     return "color:#198754"
                 except: return ""
-            st.dataframe(top.style.applymap(color_marge, subset=["marge_pct"]),
+            st.dataframe(top.style.map(color_marge, subset=["marge_pct"]),
                          use_container_width=True, hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
