@@ -2,17 +2,23 @@ import pandas as pd
 
 
 def kpi_generaux(df):
+    """
+    Calcule les KPIs principaux.
+    
+    Revenu total = SUM(montant_ht) sur toutes les SINV
+    Marge % = calculée sur les lignes avec COGS > 0 uniquement
+              (exclut Frais de Passage où COGS=0 et Marge=100%)
+    """
     revenu_total    = df["montant_ht"].sum()  if "montant_ht"  in df.columns else 0
     volume_total    = df["qte"].sum()         if "qte"         in df.columns else 0
     nb_transactions = len(df)
 
-    # BUG 2 FIX: marge % calculée uniquement sur les lignes avec COGS > 0
-    # (exclut les Frais de Passage où Marge = Montant HT = 100%)
-    if "cogs" in df.columns and "marge_total" in df.columns and "montant_ht" in df.columns:
+    # Marge % sur lignes avec COGS > 0 uniquement
+    if all(c in df.columns for c in ["cogs", "marge_total", "montant_ht"]):
         df_cogs = df[df["cogs"] > 0]
-        marge_totale  = df_cogs["marge_total"].sum()
-        revenu_cogs   = df_cogs["montant_ht"].sum()
-        marge_pct     = (marge_totale / revenu_cogs * 100) if revenu_cogs != 0 else 0
+        marge_totale = df_cogs["marge_total"].sum()
+        revenu_cogs  = df_cogs["montant_ht"].sum()
+        marge_pct    = (marge_totale / revenu_cogs * 100) if revenu_cogs != 0 else 0
     else:
         marge_totale = df["marge_total"].sum() if "marge_total" in df.columns else 0
         marge_pct    = (marge_totale / revenu_total * 100) if revenu_total != 0 else 0
@@ -40,7 +46,9 @@ def revenu_par_segment(df):
     if "segment" not in df.columns or "montant_ht" not in df.columns:
         return pd.DataFrame()
     out = df.groupby("segment", dropna=False).agg(
-        revenu=("montant_ht","sum"), volume=("qte","sum"), marge=("marge_total","sum")
+        revenu=("montant_ht","sum"),
+        volume=("qte","sum"),
+        marge=("marge_total","sum")
     ).reset_index()
     out["marge_pct"] = (out["marge"] / out["revenu"].replace(0, pd.NA) * 100).round(2)
     return out.sort_values("revenu", ascending=False)
