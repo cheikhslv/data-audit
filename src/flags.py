@@ -1,5 +1,8 @@
 import pandas as pd
 
+REVENU_MIN_MENSUEL = 100_000  # RWF — exclure mois avec revenu < 100k (évite divisions aberrantes)
+MARGE_PCT_MAX      = 500      # Cap : exclure % > 500 (valeurs impossibles)
+
 
 def flag_marge_negative(df):
     if "marge_total" not in df.columns:
@@ -32,7 +35,6 @@ def flag_concentration_client(df, seuil=0.50):
     revenu_total = df["montant_ht"].sum()
     if revenu_total == 0:
         return {}
-    # Utiliser raison_sociale si disponible pour l'affichage
     col_nom = "raison_sociale" if "raison_sociale" in df.columns else "tiers"
     top3 = df.groupby(col_nom)["montant_ht"].sum().nlargest(3)
     pct_top3 = top3.sum() / revenu_total
@@ -45,12 +47,26 @@ def flag_concentration_client(df, seuil=0.50):
 
 
 def flag_marge_decroissante(df, nb_mois=2):
+    """
+    BUG 4 FIX:
+    - Filtre les mois avec revenu < 100k RWF (évite divisions par quasi-zéro)
+    - Cap les % aberrants > 500% (valeurs impossibles)
+    """
     if not all(c in df.columns for c in ["tiers","mois","montant_ht","marge_total"]):
         return pd.DataFrame()
+
     grp = df.groupby(["tiers","mois"], dropna=False).agg(
         revenu=("montant_ht","sum"), marge=("marge_total","sum")
     ).reset_index()
-    grp["marge_pct"] = (grp["marge"] / grp["revenu"].replace(0, pd.NA) * 100).round(2)
+
+    # BUG 4 FIX: exclure mois avec revenu trop faible
+    grp = grp[grp["revenu"] >= REVENU_MIN_MENSUEL]
+
+    grp["marge_pct"] = (grp["marge"] / grp["revenu"] * 100).round(2)
+
+    # BUG 4 FIX: exclure % aberrants
+    grp = grp[grp["marge_pct"].abs() <= MARGE_PCT_MAX]
+
     grp = grp.dropna(subset=["marge_pct"]).sort_values(["tiers","mois"])
 
     clients_flag = []
@@ -67,14 +83,15 @@ def flag_marge_decroissante(df, nb_mois=2):
                     row[f"marge_m{j}%"] = round(fenetre[j], 2)
                 clients_flag.append(row)
                 break
+
     return pd.DataFrame(clients_flag)
 
 
 def resume_flags(df):
     return {
-        "nb_marge_negative":    len(flag_marge_negative(df)),
-        "nb_cogs_zero":         len(flag_cogs_zero(df)),
-        "nb_doublons":          len(flag_doublons(df)),
-        "concentration":        flag_concentration_client(df),
-        "nb_marge_decroissante":len(flag_marge_decroissante(df)),
+        "nb_marge_negative":     len(flag_marge_negative(df)),
+        "nb_cogs_zero":          len(flag_cogs_zero(df)),
+        "nb_doublons":           len(flag_doublons(df)),
+        "concentration":         flag_concentration_client(df),
+        "nb_marge_decroissante": len(flag_marge_decroissante(df)),
     }
