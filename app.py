@@ -22,19 +22,32 @@ from src.multi_year import (
 
 # ── DETECTER_ANNEE ────────────────────────────────────────────────────────────
 def detecter_annee(nom_fichier: str) -> str:
-    m = _re.search(r'[\s_]au[\s_]\d{4}(\d{2})', nom_fichier, _re.IGNORECASE)
+    nom = nom_fichier.upper()
+
+    # Pattern Sage X3 JJMMAA : apres "AU" → ex: au_311225 → 2025
+    m = _re.search(r"AU[\s_](\d{2})(\d{2})(\d{2})", nom)
     if m:
-        yr = int(m.group(1))
+        yr = int(m.group(3))
+        return str(2000 + yr)
+
+    # Blocs de 6 chiffres avec separateurs → JJMMAA, prendre le dernier
+    blocs = _re.findall(r"(?:^|[\s_\-])(\d{6})(?:[\s_\-]|$)", nom)
+    if blocs:
+        yr = int(blocs[-1][4:6])
+        return str(2000 + yr)
+
+    # N importe quel bloc de 6 chiffres → JJMMAA
+    blocs6 = _re.findall(r"\d{6}", nom)
+    if blocs6:
+        yr = int(blocs6[-1][4:6])
         if 0 <= yr <= 99:
             return str(2000 + yr)
-    m2 = _re.search(r'[\s_]\d{4}(\d{2})[\s_]', nom_fichier)
-    if m2:
-        yr = int(m2.group(1))
-        if 0 <= yr <= 99:
-            return str(2000 + yr)
-    for tok in _re.findall(r'\d{4}', nom_fichier):
+
+    # Annee 4 chiffres explicite
+    for tok in _re.findall(r"\d{4}", nom):
         if 2000 <= int(tok) <= 2099:
             return tok
+
     return "Inconnu"
 
 
