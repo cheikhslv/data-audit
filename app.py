@@ -247,7 +247,7 @@ with st.sidebar:
         st.success(f"✓ {fichier.name}")
 
     st.markdown('<div class="sb-nav-label">Navigation</div>', unsafe_allow_html=True)
-    page = st.radio("", ["Vue générale","Analyse clients","Flags de risque"],
+    page = st.radio("Navigation", ["Vue générale","Analyse clients","Flags de risque"],
                     label_visibility="collapsed")
 
 

@@ -158,7 +158,7 @@ def charger_fichier(fichier):
                 df_raw = pd.read_excel(io.BytesIO(contenu), engine="openpyxl")
             except Exception:
                 try:
-                    df_raw = pd.read_excel(io.BytesIO(contenu), engine="xlrd")
+                    df_raw = pd.read_excel(io.BytesIO(contenu), sheet_name="Sage.X3.DS.", engine="calamine")
                 except Exception:
                     df_raw = lire_xlsx_sage(contenu)
     except Exception as e:
