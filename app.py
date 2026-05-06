@@ -479,7 +479,7 @@ elif page == "Analyse clients":
                 st.markdown('<div class="table-card"><div class="chart-title">Top 10 clients par revenu</div>', unsafe_allow_html=True)
                 top = top_clients(df, 10)
                 if not top.empty:
-                    st.dataframe(top.style.applymap(color_marge_cell, subset=["marge_pct"]), width="stretch", hide_index=True)
+                    st.dataframe(top.style.map(color_marge_cell, subset=["marge_pct"]), width="stretch", hide_index=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
             with col2:
@@ -872,7 +872,7 @@ elif page == "Canal EXPOR":
 
         if not expor["clients"].empty:
             st.markdown('<div class="table-card"><div class="chart-title">Clients EXPOR — liste complète</div>', unsafe_allow_html=True)
-            st.dataframe(expor["clients"].sort_values(["annee", "revenu"], ascending=[True, False]).style.applymap(color_marge_cell, subset=["marge_pct"]), width="stretch", hide_index=True)
+            st.dataframe(expor["clients"].sort_values(["annee", "revenu"], ascending=[True, False]).style.map(color_marge_cell, subset=["marge_pct"]), width="stretch", hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
 
