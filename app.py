@@ -194,7 +194,7 @@ with st.sidebar:
     pages_multi = ["Comparaison YoY","Analyse volume","Canal EXPOR","Évolution clients","Frais de Passage"]
     pages_dispo = pages_base + (pages_multi if nb_fichiers >= 2 else [])
 
-    page = st.radio("", pages_dispo, label_visibility="collapsed")
+    page = st.radio("Navigation", pages_dispo, label_visibility="collapsed")
 
     if nb_fichiers == 1:
         st.markdown("<hr>", unsafe_allow_html=True)
@@ -313,7 +313,7 @@ if page == "Dashboard":
                 plotly_white(fig, 230)
                 fig.update_xaxes(tickangle=45)
                 fig.update_layout(showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col2:
@@ -328,7 +328,7 @@ if page == "Dashboard":
                                   hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>")
                 plotly_white(fig, 230, legend=True)
                 fig.update_layout(legend=dict(orientation="v", x=1.05, y=0.5))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         # Row 3: Marge clients + Canal
@@ -362,7 +362,7 @@ if page == "Dashboard":
                 fig.update_xaxes(title="Marge %", zeroline=True, zerolinecolor=BLACK, zerolinewidth=1)
                 fig.update_yaxes(title="")
                 fig.update_layout(showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col4:
@@ -378,7 +378,7 @@ if page == "Dashboard":
                 fig.update_traces(marker_line_width=0, textfont_size=10)
                 plotly_white(fig, 240)
                 fig.update_coloraxes(colorbar=dict(title="Marge%",tickfont=dict(size=9)))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         # Row 4: Segment + Top clients
@@ -395,7 +395,7 @@ if page == "Dashboard":
                                  text_auto=".2s")
                     fig.update_traces(marker_line_width=0)
                     plotly_white(fig, max(180, len(seg_plot)*44))
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 total_rev = seg_df["revenu"].sum()
                 non_def = seg_df[seg_df["segment"]=="Non défini"]["revenu"].sum()
                 if total_rev>0: st.caption(f"⚠️ {non_def/total_rev*100:.0f}% sans segment")
@@ -414,7 +414,7 @@ if page == "Dashboard":
                 fig.update_traces(marker_line_width=0)
                 plotly_white(fig, max(220, len(top)*30))
                 fig.update_coloraxes(colorbar=dict(title="Marge%",tickfont=dict(size=9)))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -439,7 +439,7 @@ elif page == "Analyse clients":
             st.markdown('<div class="table-card"><div class="chart-title">Top 10 clients par revenu</div>', unsafe_allow_html=True)
             top = top_clients(df, 10)
             if not top.empty:
-                st.dataframe(top.style.applymap(color_marge_cell, subset=["marge_pct"]), use_container_width=True, hide_index=True)
+                st.dataframe(top.style.applymap(color_marge_cell, subset=["marge_pct"]), width="stretch", hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col2:
@@ -461,10 +461,10 @@ elif page == "Analyse clients":
                 ))
                 fig.update_layout(height=200, margin=dict(t=30,b=10,l=20,r=20), paper_bgcolor="white", font=dict(family="Inter"))
                 st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 if conc["flag"]: st.error(f"🔴 {pct}% > seuil 50%")
                 else: st.success(f"✅ {pct}% < seuil 50%")
-                st.dataframe(conc["top3"], hide_index=True, use_container_width=True)
+                st.dataframe(conc["top3"], hide_index=True, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         col3, col4 = st.columns(2)
@@ -474,7 +474,7 @@ elif page == "Analyse clients":
             if decr.empty: st.success("Aucun client en baisse 2 mois de suite.")
             else:
                 st.warning(f"{len(decr)} client(s) en baisse continue")
-                st.dataframe(decr, use_container_width=True, hide_index=True)
+                st.dataframe(decr, width="stretch", hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col4:
@@ -487,7 +487,7 @@ elif page == "Analyse clients":
                 if cli_neg_f.empty: st.success("Aucun client à marge négative.")
                 else:
                     st.error(f"{len(cli_neg_f)} client(s) à marge négative")
-                    st.dataframe(cli_neg_f, use_container_width=True, hide_index=True)
+                    st.dataframe(cli_neg_f, width="stretch", hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -523,7 +523,7 @@ elif page == "Flags de risque":
             if marge_neg.empty: st.success("Aucune.")
             else:
                 st.error(f"{len(marge_neg)} transaction(s)")
-                st.dataframe(marge_neg, use_container_width=True, hide_index=True)
+                st.dataframe(marge_neg, width="stretch", hide_index=True)
                 st.download_button("📥 Exporter", data=exporter_flags_excel({"Marge négative":marge_neg}), file_name=f"flag_marge_negative_{annee}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         with st.expander("⚠️ COGS = 0", expanded=True):
@@ -531,7 +531,7 @@ elif page == "Flags de risque":
             if cogs_zero.empty: st.success("Aucune anomalie.")
             else:
                 st.error(f"{len(cogs_zero)} ligne(s)")
-                st.dataframe(cogs_zero, use_container_width=True, hide_index=True)
+                st.dataframe(cogs_zero, width="stretch", hide_index=True)
                 st.download_button("📥 Exporter", data=exporter_flags_excel({"COGS zéro":cogs_zero}), file_name=f"flag_cogs_zero_{annee}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         with st.expander("🔁 Doublons", expanded=True):
@@ -539,7 +539,7 @@ elif page == "Flags de risque":
             if doublons.empty: st.success("Aucun doublon.")
             else:
                 st.warning(f"{len(doublons)} ligne(s)")
-                st.dataframe(doublons, use_container_width=True, hide_index=True)
+                st.dataframe(doublons, width="stretch", hide_index=True)
                 st.download_button("📥 Exporter", data=exporter_flags_excel({"Doublons":doublons}), file_name=f"flag_doublons_{annee}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         with st.expander("📊 Concentration client"):
@@ -548,7 +548,7 @@ elif page == "Flags de risque":
                 pct = conc["pct_top3"]
                 if conc["flag"]: st.warning(f"Top 3 = {pct}% (seuil {conc['seuil']}%)")
                 else: st.info(f"Top 3 = {pct}% — OK")
-                st.dataframe(conc["top3"], use_container_width=True, hide_index=True)
+                st.dataframe(conc["top3"], width="stretch", hide_index=True)
 
         st.divider()
         with st.expander("📥 Export complet"):
@@ -698,7 +698,7 @@ elif page == "Comparaison YoY":
                     ))
             fig.update_layout(barmode="group", bargap=0.25)
             plotly_white(fig, 280, legend=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # Tableau des deltas LOB
             if len(annees) >= 2:
@@ -712,7 +712,7 @@ elif page == "Comparaison YoY":
                     lob_delta[f"Revenu {a_last}"]  = lob_delta[f"Revenu {a_last}"].apply(fmt)
                     lob_delta["Δ %"] = lob_delta["Δ %"].apply(
                         lambda v: f"▲ {v:.1f}%" if not pd.isna(v) and v >= 0 else (f"▼ {abs(v):.1f}%" if not pd.isna(v) else "—"))
-                    st.dataframe(lob_delta, use_container_width=True, hide_index=True)
+                    st.dataframe(lob_delta, width="stretch", hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
@@ -730,7 +730,7 @@ elif page == "Comparaison YoY":
                     ))
             fig.update_layout(barmode="group", bargap=0.25)
             plotly_white(fig, 280, legend=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # Tableau delta segment
             if len(annees) >= 2:
@@ -744,7 +744,7 @@ elif page == "Comparaison YoY":
                     seg_delta[f"Volume {a_last}"]  = seg_delta[f"Volume {a_last}"].apply(fmt)
                     seg_delta["Δ %"] = seg_delta["Δ %"].apply(
                         lambda v: f"▲ {v:.1f}%" if not pd.isna(v) and v >= 0 else (f"▼ {abs(v):.1f}%" if not pd.isna(v) else "—"))
-                    st.dataframe(seg_delta, use_container_width=True, hide_index=True)
+                    st.dataframe(seg_delta, width="stretch", hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 4. Tendance mensuelle ────────────────────────
@@ -767,7 +767,7 @@ elif page == "Comparaison YoY":
             ))
     plotly_white(fig, 280, legend=True)
     fig.update_xaxes(tickangle=0)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -801,7 +801,7 @@ elif page == "Analyse volume":
                 fig.update_traces(marker_line_width=0)
                 plotly_white(fig, 240)
                 fig.update_layout(showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
@@ -814,7 +814,7 @@ elif page == "Analyse volume":
                              hole=0.4)
                 fig.update_traces(textfont_size=10)
                 plotly_white(fig, 240, legend=True)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col3:
@@ -828,7 +828,7 @@ elif page == "Analyse volume":
             fig.update_traces(marker_line_width=0)
             plotly_white(fig, 240)
             fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -851,12 +851,12 @@ elif page == "Canal EXPOR":
         fig.update_traces(marker_line_width=0)
         plotly_white(fig, 220)
         fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
         if not expor["clients"].empty:
             st.markdown('<div class="table-card"><div class="chart-title">Clients EXPOR — liste complète</div>', unsafe_allow_html=True)
-            st.dataframe(expor["clients"].sort_values(["annee","revenu"],ascending=[True,False]).style.applymap(color_marge_cell,subset=["marge_pct"]), use_container_width=True, hide_index=True)
+            st.dataframe(expor["clients"].sort_values(["annee","revenu"],ascending=[True,False]).style.applymap(color_marge_cell,subset=["marge_pct"]), width="stretch", hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -883,20 +883,20 @@ elif page == "Évolution clients":
             with col1:
                 if not evol["croissants"].empty:
                     st.markdown('<div class="table-card"><div class="chart-title">📈 Forte croissance (&gt;50%)</div>', unsafe_allow_html=True)
-                    st.dataframe(evol["croissants"].head(15), use_container_width=True, hide_index=True)
+                    st.dataframe(evol["croissants"].head(15), width="stretch", hide_index=True)
                     st.markdown('</div>', unsafe_allow_html=True)
                 if not evol["nouveaux"].empty:
                     st.markdown('<div class="table-card"><div class="chart-title">🆕 Clients nouveaux</div>', unsafe_allow_html=True)
-                    st.dataframe(evol["nouveaux"].head(15), use_container_width=True, hide_index=True)
+                    st.dataframe(evol["nouveaux"].head(15), width="stretch", hide_index=True)
                     st.markdown('</div>', unsafe_allow_html=True)
             with col2:
                 if not evol["en_baisse"].empty:
                     st.markdown('<div class="table-card"><div class="chart-title">📉 Forte baisse (&gt;30%)</div>', unsafe_allow_html=True)
-                    st.dataframe(evol["en_baisse"].head(15), use_container_width=True, hide_index=True)
+                    st.dataframe(evol["en_baisse"].head(15), width="stretch", hide_index=True)
                     st.markdown('</div>', unsafe_allow_html=True)
                 if not evol["disparus"].empty:
                     st.markdown('<div class="table-card"><div class="chart-title">❌ Clients disparus</div>', unsafe_allow_html=True)
-                    st.dataframe(evol["disparus"].head(15), use_container_width=True, hide_index=True)
+                    st.dataframe(evol["disparus"].head(15), width="stretch", hide_index=True)
                     st.markdown('</div>', unsafe_allow_html=True)
             st.divider()
 
@@ -927,12 +927,12 @@ elif page == "Frais de Passage":
             fig.update_traces(marker_line_width=0)
             plotly_white(fig, 220)
             fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="table-card"><div class="chart-title">Liste complète — marge &gt; 90%</div>', unsafe_allow_html=True)
         cols_show = [c for c in ["annee","raison_sociale","tiers","revenu","cogs","marge","marge_pct"] if c in fp.columns]
-        st.dataframe(fp[cols_show].sort_values(["annee","revenu"],ascending=[True,False]), use_container_width=True, hide_index=True)
+        st.dataframe(fp[cols_show].sort_values(["annee","revenu"],ascending=[True,False]), width="stretch", hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.download_button("📥 Exporter Frais de Passage",
