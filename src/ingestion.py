@@ -5,6 +5,9 @@ import io
 import re
 from lxml import etree
 
+# ---------------------------------------------------------------------------
+# Mapping colonnes Sage X3 -> noms internes
+# ---------------------------------------------------------------------------
 COLONNES_ATTENDUES = {
     "date":           ["date comptable"],
     "num_piece":      ["numéro de pièce", "numero de piece"],
@@ -25,29 +28,45 @@ COLONNES_ATTENDUES = {
     "prix_revient":   ["prix revient (devise local)"],
     "devise":         ["devise"],
     "site":           ["site"],
+    "compte":         ["comptes généraux", "comptes generaux", "compte général", "compte general"],
+    "societe":        ["société", "societe"],
+    "cost_center":    ["cost center"],
+    "produit":        ["product"],
+    "volume":         ["volume ligne"],
+    "collect":        ["collect"],
 }
 
-LOB_VALIDES   = {"B2B","B2C","LUB","LPG","INDUS","DODO","DISTR","COMM","WHOSA","EXPOR","CODO","DOMES","AGRI"}
-CANAL_VALIDES = {"DISTR","DODO","INDUS","EXPOR","CODO","COMM","WHOSA","DOMES","AGRI"}
-SINV_TYPES    = {"SINV"}
-EXCEL_EPOCH   = pd.Timestamp("1899-12-30")
+LOB_VALIDES   = {"B2B", "B2C", "LUB", "LPG", "INDUS", "DODO", "DISTR", "COMM",
+                 "WHOSA", "EXPOR", "CODO", "DOMES", "AGRI"}
+CANAL_VALIDES = {"DISTR", "DODO", "INDUS", "EXPOR", "CODO", "COMM", "WHOSA",
+                 "DOMES", "AGRI", "OWNDI"}
+
+EXCEL_EPOCH = pd.Timestamp("1899-12-30")
+
+# ---------------------------------------------------------------------------
+# Logique de segmentation comptable
+#
+#   SINV + compte 31x  → df_ventes       (vraies ventes, KPIs principaux)
+#   SINV + compte 36x  → df_frais_passage (transit/intermédiaire, onglet séparé)
+#   CRM   (tout compte)→ df_avoirs        (credit notes, onglet séparé)
+#   SDBN  (tout compte)→ exclu            (dépôts Fleet Card, pas des ventes)
+# ---------------------------------------------------------------------------
 
 
-def serial_to_date(val):
-    try:
-        n = float(val)
-        if 30000 < n < 60000:
-            return EXCEL_EPOCH + pd.Timedelta(days=int(n))
-        return pd.NaT
-    except Exception:
-        return pd.NaT
+def _compte_prefix(serie: pd.Series) -> pd.Series:
+    """Retourne les 2 premiers chiffres du compte général."""
+    return serie.astype(str).str.strip().str[:2]
 
 
-def col_letters(cell_ref):
+# ---------------------------------------------------------------------------
+# Parseur XML Sage X3
+# ---------------------------------------------------------------------------
+
+def col_letters(cell_ref: str) -> str:
     return re.match(r'([A-Z]+)', cell_ref).group(1)
 
 
-def detecter_colonne(df_cols, noms_possibles):
+def detecter_colonne(df_cols: list, noms_possibles: list):
     df_cols_lower = [c.lower().strip() for c in df_cols]
     for nom in noms_possibles:
         for i, col in enumerate(df_cols_lower):
@@ -56,48 +75,76 @@ def detecter_colonne(df_cols, noms_possibles):
     return None
 
 
-def lire_xlsx_sage(contenu_bytes):
+def serial_to_date(val):
+    try:
+        n = float(val)
+        if 30000 < n < 70000:
+            return EXCEL_EPOCH + pd.Timedelta(days=int(n))
+        return pd.NaT
+    except Exception:
+        return pd.NaT
+
+
+def lire_xlsx_sage(contenu_bytes: bytes) -> pd.DataFrame | None:
     """
-    Parseur XML robuste pour fichiers Sage X3 (stylesheet corrompue).
-    - Lit toujours la feuille Sage.X3.DS. (sheet2.xml)
-    - Lit les cellules par référence de colonne (pas par position)
-    - Ignore les lignes cachées (totaux)
+    Parseur XML robuste pour fichiers Sage X3 (stylesheet parfois corrompue).
+    - Cible la feuille Sage.X3.DS. (sheet2.xml par défaut)
+    - Lit les cellules par référence de colonne (évite les décalages)
+    - Ignore les lignes cachées (totaux intermédiaires Sage)
     """
     ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
     with zipfile.ZipFile(io.BytesIO(contenu_bytes)) as z:
-        # Shared strings
         with z.open("xl/sharedStrings.xml") as f:
             shared_root = etree.parse(f)
-        strings = []
-        for si in shared_root.findall(f"{{{ns}}}si"):
-            texts = si.findall(f".//{{{ns}}}t")
-            strings.append("".join(t.text or "" for t in texts))
+        strings = [
+            "".join(t.text or "" for t in si.findall(f".//{{{ns}}}t"))
+            for si in shared_root.findall(f"{{{ns}}}si")
+        ]
 
-        # Trouver la feuille Sage.X3.DS. via workbook.xml + rels
-        target_sheet = "xl/worksheets/sheet2.xml"  # défaut fiable
+        # Trouver "Sage.X3.DS." par son nom exact dans workbook.xml
+        # Elle peut être en sheet2, sheet3... selon si un TCD est présent avant elle
+        target_sheet = None
         try:
             with z.open("xl/workbook.xml") as f:
                 wb = etree.parse(f)
             rels_map = {}
             with z.open("xl/_rels/workbook.xml.rels") as f:
                 rels_xml = etree.parse(f)
-            for r in rels_xml.findall(".//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
-                rels_map[r.get('Id')] = r.get('Target')
+            for r in rels_xml.findall(
+                ".//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+            ):
+                rels_map[r.get("Id")] = r.get("Target")
             for s in wb.findall(f".//{{{ns}}}sheet"):
-                name = s.get('name', '')
-                if 'DS' in name or ('Sage' in name and 'Reserved' not in name):
-                    rid = s.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
-                    target = rels_map.get(rid, '')
+                if s.get("name", "") == "Sage.X3.DS.":
+                    rid = s.get(
+                        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+                    )
+                    target = rels_map.get(rid, "")
                     if target:
                         target_sheet = f"xl/{target}"
                         break
         except Exception:
             pass
 
-        # Lire la feuille de données
-        if target_sheet not in z.namelist():
-            target_sheet = "xl/worksheets/sheet2.xml"
+        # Fallback : feuille avec le plus grand nombre de colonnes dans le header
+        if not target_sheet or target_sheet not in z.namelist():
+            best_sheet = "xl/worksheets/sheet2.xml"
+            best_cols = 0
+            for sheet_file in z.namelist():
+                if not (sheet_file.startswith("xl/worksheets/sheet") and sheet_file.endswith(".xml")):
+                    continue
+                try:
+                    with z.open(sheet_file) as f:
+                        sh = etree.parse(f)
+                    first_rows = sh.findall(f".//{{{ns}}}row")
+                    n = len(first_rows[0].findall(f"{{{ns}}}c")) if first_rows else 0
+                    if n > best_cols:
+                        best_cols = n
+                        best_sheet = sheet_file
+                except Exception:
+                    continue
+            target_sheet = best_sheet
 
         with z.open(target_sheet) as f:
             sheet = etree.parse(f)
@@ -106,7 +153,7 @@ def lire_xlsx_sage(contenu_bytes):
         if len(rows) < 2:
             return None
 
-        # Header — lire par référence de colonne
+        # Header
         col_map = {}
         for c in rows[0].findall(f"{{{ns}}}c"):
             ref = c.get("r", "")
@@ -124,10 +171,10 @@ def lire_xlsx_sage(contenu_bytes):
         if len(col_map) < 5:
             return None
 
-        # Données — lire par référence de colonne (correction bug décalage)
+        # Données
         data = []
         for row in rows[1:]:
-            if row.get('hidden') == '1':  # ignorer lignes cachées (totaux)
+            if row.get("hidden") == "1":
                 continue
             rd = {}
             for c in row.findall(f"{{{ns}}}c"):
@@ -153,7 +200,15 @@ def lire_xlsx_sage(contenu_bytes):
         return pd.DataFrame(data) if data else None
 
 
-def nettoyer_df(df_raw, mapping):
+# ---------------------------------------------------------------------------
+# Nettoyage commun (appliqué à toutes les strates)
+# ---------------------------------------------------------------------------
+
+def _nettoyer_base(df_raw: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+    """
+    Sélectionne et nettoie les colonnes mappées.
+    Retourne le DataFrame complet SANS filtre par type/compte.
+    """
     df = pd.DataFrame()
     for cle, col in mapping.items():
         df[cle] = df_raw[col].copy()
@@ -163,6 +218,14 @@ def nettoyer_df(df_raw, mapping):
         df["type_facture"] = df["type_facture"].astype(str).str.strip()
     else:
         df["type_facture"] = "SINV"
+
+    # Compte général — préfixe 2 chiffres
+    if "compte" in df.columns:
+        df["compte"] = df["compte"].astype(str).str.strip()
+        df["compte_prefix"] = df["compte"].str[:2]
+    else:
+        df["compte"] = ""
+        df["compte_prefix"] = ""
 
     # Dates serial Excel -> datetime
     if "date" in df.columns:
@@ -196,12 +259,10 @@ def nettoyer_df(df_raw, mapping):
         )
 
     # Strings
-    for c in ["tiers", "raison_sociale", "num_piece", "article", "designation", "mvt_stock"]:
+    for c in ["tiers", "raison_sociale", "num_piece", "article", "designation",
+              "mvt_stock", "societe", "cost_center", "produit", "collect"]:
         if c in df.columns:
             df[c] = df[c].astype(str).str.strip()
-
-    # Filtre SINV uniquement
-    df = df[df["type_facture"].isin(SINV_TYPES)].copy()
 
     # Supprimer lignes montant = 0
     if "montant_ht" in df.columns:
@@ -210,11 +271,72 @@ def nettoyer_df(df_raw, mapping):
     return df.reset_index(drop=True)
 
 
-def charger_fichier(fichier):
+# ---------------------------------------------------------------------------
+# Segmentation comptable principale
+# ---------------------------------------------------------------------------
+
+def segmenter_flash_report(df: pd.DataFrame) -> dict:
+    """
+    Segmente le DataFrame brut nettoyé en 3 strates comptables :
+
+    - 'ventes'         : SINV + compte 31x → vraies ventes, KPIs principaux
+    - 'frais_passage'  : SINV + compte 36x → transit/intermédiaire, onglet dédié
+    - 'avoirs'         : CRM (tous comptes) → credit notes, onglet dédié
+    - (SDBN exclu)     : dépôts Fleet Card, pas des ventes
+
+    Retourne un dict avec les 3 DataFrames + métadonnées.
+    """
+    tf = df["type_facture"]
+    cp = df.get("compte_prefix", pd.Series([""] * len(df)))
+
+    # Strate 1 — Vraies ventes : SINV compte 31x
+    mask_ventes = (tf == "SINV") & (cp == "31")
+    df_ventes = df[mask_ventes].copy()
+
+    # Strate 2 — Frais de passage : SINV compte 36x
+    mask_fp = (tf == "SINV") & (cp == "36")
+    df_fp = df[mask_fp].copy()
+
+    # Strate 3 — Avoirs : CRM (tous comptes)
+    mask_avoirs = tf == "CRM"
+    df_avoirs = df[mask_avoirs].copy()
+
+    # SDBN → exclu silencieusement (dépôts Fleet Card)
+    nb_sdbn = int((tf == "SDBN").sum())
+
+    return {
+        "ventes":          df_ventes,
+        "frais_passage":   df_fp,
+        "avoirs":          df_avoirs,
+        "nb_sdbn_exclus":  nb_sdbn,
+        "stats": {
+            "nb_ventes":        len(df_ventes),
+            "nb_frais_passage": len(df_fp),
+            "nb_avoirs":        len(df_avoirs),
+            "nb_sdbn":          nb_sdbn,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Point d'entrée principal
+# ---------------------------------------------------------------------------
+
+def charger_fichier(fichier) -> tuple[dict | None, dict]:
+    """
+    Charge un fichier Flash Report Sage X3 (xlsx ou csv).
+
+    Retourne :
+        (segments, meta)
+        segments = {"ventes": df, "frais_passage": df, "avoirs": df, ...}
+        meta     = {"mapping": ..., "colonnes_manquantes": ..., "stats": ..., ...}
+    """
     nom = fichier.name.lower()
     df_raw = None
+
     try:
         contenu = fichier.read()
+
         if nom.endswith(".csv"):
             for sep in [";", "\t", ","]:
                 for enc in ["utf-8", "latin-1", "utf-8-sig"]:
@@ -227,11 +349,11 @@ def charger_fichier(fichier):
                 if df_raw is not None and len(df_raw.columns) > 3:
                     break
         else:
-            # 1. openpyxl (fichiers normaux)
+            # Essai 1 : openpyxl standard
             try:
                 df_raw = pd.read_excel(io.BytesIO(contenu), engine="openpyxl")
             except Exception:
-                # 2. Parseur XML custom (Sage X3 stylesheet corrompue)
+                # Essai 2 : parseur XML custom (stylesheet Sage corrompue)
                 df_raw = lire_xlsx_sage(contenu)
 
     except Exception as e:
@@ -244,6 +366,7 @@ def charger_fichier(fichier):
 
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
 
+    # Détecter le mapping colonnes
     mapping = {}
     for cle, noms in COLONNES_ATTENDUES.items():
         col = detecter_colonne(list(df_raw.columns), noms)
@@ -251,25 +374,32 @@ def charger_fichier(fichier):
             mapping[cle] = col
 
     colonnes_manquantes = [
-        k for k in ["date", "tiers", "montant_ht", "marge_total", "cogs"]
+        k for k in ["date", "tiers", "montant_ht", "marge_total", "cogs", "compte"]
         if k not in mapping
     ]
 
+    if colonnes_manquantes:
+        st.warning(
+            f"⚠️ Colonnes non trouvées : {', '.join(colonnes_manquantes)}. "
+            "Vérifier le format du fichier."
+        )
+
+    # Nettoyage de base
     try:
-        df_clean = nettoyer_df(df_raw, mapping)
+        df_clean = _nettoyer_base(df_raw, mapping)
     except Exception as e:
         st.error(f"Erreur nettoyage : {e}")
         return None, {}
 
-    # Compter avoirs pour info sidebar
-    tf_col = next((c for c in df_raw.columns if "type" in c.lower() and "facture" in c.lower()), None)
-    nb_avoirs = 0
-    if tf_col:
-        nb_avoirs = len(df_raw[df_raw[tf_col].astype(str).str.strip() == "CRM"])
+    # Segmentation comptable
+    segments = segmenter_flash_report(df_clean)
 
-    return df_clean, {
-        "mapping": mapping,
+    # Métadonnées
+    meta = {
+        "mapping":             mapping,
         "colonnes_manquantes": colonnes_manquantes,
-        "nb_lignes": len(df_clean),
-        "nb_avoirs": nb_avoirs,
+        "stats":               segments["stats"],
+        "nom_fichier":         fichier.name,
     }
+
+    return segments, meta
