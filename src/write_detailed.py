@@ -1,4 +1,4 @@
-import pandas as pd
+content = '''import pandas as pd
 import io
 import re
 
@@ -50,7 +50,7 @@ def _est_ligne_client(row):
     import re
     a_val = str(row[0]).strip() if row[0] is not None else ""
     b_val = row[1] if len(row) > 1 else None
-    m = re.match(r"^(\d{5,})\s+(.+)$", a_val)
+    m = re.match(r"^(\\d{5,})\\s+(.+)$", a_val)
     if m and isinstance(b_val, (int, float)):
         return True, m.group(1), m.group(2).strip()
     return False, "", ""
@@ -185,3 +185,7 @@ def resume_flags_detailed(df_tx, df_clients):
             "nb_paiements_sans_facture":len(flag_paiements_sans_facture(df_clients)),
             "nb_soldes_negatifs":len(flag_solde_negatif(df_clients)),
             "nb_echeances_90j_plus":len(flag_echeances_depassees(df_tx,90))}
+'''
+
+open('detailed_aged_balance.py', 'w', encoding='utf-8').write(content)
+print('OK', len(content), 'chars')

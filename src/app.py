@@ -20,6 +20,18 @@ from ageing_credit_risk import (
     flag_balance_negative, flag_180_plus, flag_securite_expiree,
     resume_flags_ageing
 )
+from detailed_aged_balance import (
+    charger_detailed_aged, kpi_detailed, top_clients_overdue,
+    transactions_par_type, flag_factures_impayees_60j,
+    flag_paiements_sans_facture, flag_solde_negatif,
+    flag_echeances_depassees, resume_flags_detailed
+)
+from general_balance import (
+    charger_general_balance, kpi_general, balance_par_classe,
+    top_comptes_mouvement, flag_comptes_desequilibres,
+    flag_comptes_solde_inhabituel, flag_comptes_sans_mouvement,
+    flag_variation_significative, resume_flags_general
+)
 
 # ---------------------------------------------------------------------------
 # Config page
@@ -145,6 +157,24 @@ with st.sidebar:
         key="ageing_upload",
     )
     st.divider()
+    st.markdown("**📂 Upload Detailed Aged Balance**")
+    fichier_detailed = st.file_uploader(
+        "Detailed Aged Balance (.xls / .xlsx)",
+        type=["xls", "xlsx"],
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+        key="detailed_upload",
+    )
+    st.divider()
+    st.markdown("**📂 Upload General Balance**")
+    fichier_general = st.file_uploader(
+        "General Balance (.xls / .xlsx)",
+        type=["xls", "xlsx"],
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+        key="general_upload",
+    )
+    st.divider()
     st.caption("Oryx Energies Group — Internal Audit\nMai 2026")
 
 
@@ -235,10 +265,50 @@ if fichier_ageing is not None:
         st.sidebar.error(f"Erreur Ageing : {e}")
 
 # ---------------------------------------------------------------------------
+# Chargement Detailed Aged Balance
+# ---------------------------------------------------------------------------
+
+@st.cache_data(show_spinner="Chargement Detailed Aged Balance...")
+def charger_detailed_cache(nom, contenu):
+    class FakeFichier:
+        def __init__(self, n, c): self.name = n; self._c = c
+        def read(self): return self._c
+    return charger_detailed_aged(FakeFichier(nom, contenu))
+
+data_detailed = None
+if fichier_detailed is not None:
+    try:
+        data_detailed = charger_detailed_cache(fichier_detailed.name, fichier_detailed.read())
+        with st.sidebar:
+            st.markdown(f"**Detailed Aged chargé :** {', '.join(data_detailed['annees'])}")
+    except Exception as e:
+        st.sidebar.error(f"Erreur Detailed Aged : {e}")
+
+# ---------------------------------------------------------------------------
+# Chargement General Balance
+# ---------------------------------------------------------------------------
+
+@st.cache_data(show_spinner="Chargement General Balance...")
+def charger_general_cache(nom, contenu):
+    class FakeFichier:
+        def __init__(self, n, c): self.name = n; self._c = c
+        def read(self): return self._c
+    return charger_general_balance(FakeFichier(nom, contenu))
+
+data_general = None
+if fichier_general is not None:
+    try:
+        data_general = charger_general_cache(fichier_general.name, fichier_general.read())
+        with st.sidebar:
+            st.markdown(f"**General Balance chargé :** {', '.join(data_general['annees'])}")
+    except Exception as e:
+        st.sidebar.error(f"Erreur General Balance : {e}")
+
+# ---------------------------------------------------------------------------
 # Onglets principaux
 # ---------------------------------------------------------------------------
 
-tab_vue, tab_clients, tab_flags, tab_avoirs, tab_fp, tab_yoy, tab_ageing = st.tabs([
+tab_vue, tab_clients, tab_flags, tab_avoirs, tab_fp, tab_yoy, tab_ageing, tab_detailed, tab_general = st.tabs([
     "📊 Vue Générale",
     "👥 Clients",
     "🚨 Flags de Risque",
@@ -246,6 +316,8 @@ tab_vue, tab_clients, tab_flags, tab_avoirs, tab_fp, tab_yoy, tab_ageing = st.ta
     "🔄 Frais de Passage",
     "📈 Multi-Années",
     "⚠️ Ageing Credit Risk",
+    "📋 Detailed Aged Balance",
+    "⚖️ General Balance",
 ])
 
 
@@ -942,3 +1014,265 @@ with tab_ageing:
             file_name=f"flags_ageing_{annee_ag}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+
+# ===========================================================================
+# TAB 8 — DETAILED AGED BALANCE
+# ===========================================================================
+with tab_detailed:
+    st.markdown("### 📋 Detailed Aged Balance — Analyse par transaction")
+
+    if data_detailed is None:
+        st.info("💡 Uploadez le fichier Detailed Aged Balance (.xls) dans le panneau de gauche.")
+        st.markdown(f"""
+        <div style="background:{ORYX_LIGHT}; border-radius:12px; padding:24px; margin-top:16px;">
+            <b>Ce module analyse :</b><br>
+            • Toutes les transactions par client (factures, paiements, avoirs)<br>
+            • Balance âgée par tranche : ≥60j, 30-59j, 0-29j<br>
+            • Factures impayées depuis plus de 60 jours<br>
+            • Clients avec solde négatif (avoirs non imputés)
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        annees_det = data_detailed["annees"]
+        annee_det  = st.selectbox("Année", options=annees_det,
+                                   index=len(annees_det)-1, key="sel_detailed")
+        df_tx  = data_detailed[annee_det]["transactions"]
+        df_cli = data_detailed[annee_det]["clients"]
+        meta_d = data_detailed[annee_det]["meta"]
+        k_det  = kpi_detailed(df_tx, df_cli)
+
+        st.caption(f"Date de référence : {meta_d['date_ref_str']} | {k_det['nb_clients']} clients | {k_det['nb_transactions']:,} transactions")
+
+        # KPIs
+        d1, d2, d3, d4, d5 = st.columns(5)
+        d1.metric("👥 Clients",        f"{k_det['nb_clients']:,}")
+        d2.metric("🧾 Factures",        f"{k_det['nb_factures']:,}")
+        d3.metric("💳 Paiements",       f"{k_det['nb_paiements']:,}")
+        d4.metric("🔴 Overdue ≥60j",   fmt_rwf(k_det["total_j60_plus"]))
+        d5.metric("💰 Balance nette",   fmt_rwf(k_det["balance_nette"]))
+
+        st.divider()
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            # Distribution par tranche
+            tranches_data = {
+                "≥60 jours":   k_det["total_j60_plus"],
+                "30-59 jours": k_det["total_j30_59"],
+                "0-29 jours":  k_det["total_j0_29"],
+                "Non échu":    k_det["total_non_echu"],
+            }
+            df_tr = pd.DataFrame([{"tranche": k, "montant": v}
+                                   for k, v in tranches_data.items()])
+            fig_tr = px.bar(df_tr, x="tranche", y="montant",
+                           title=f"Distribution par tranche — {annee_det}",
+                           color="tranche",
+                           color_discrete_sequence=[RED, ORYX_ORANGE, "#F39C12", GREEN],
+                           text="montant")
+            fig_tr.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+            fig_tr.update_layout(showlegend=False, plot_bgcolor="white",
+                                  paper_bgcolor="white", margin=dict(t=40))
+            st.plotly_chart(fig_tr, use_container_width=True)
+
+        with col_r:
+            # Types de transactions
+            tx_type = transactions_par_type(df_tx)
+            fig_tx = px.bar(tx_type, x="type_tx", y="nb",
+                           title="Transactions par type",
+                           color_discrete_sequence=[ORYX_BLUE],
+                           text="nb")
+            fig_tx.update_traces(texttemplate="%{text:,}", textposition="outside")
+            fig_tx.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                                  margin=dict(t=40))
+            st.plotly_chart(fig_tx, use_container_width=True)
+
+        # Top clients overdue
+        st.markdown('<div class="section-title">Top 10 clients — Overdue ≥ 60 jours</div>',
+                    unsafe_allow_html=True)
+        top_det = top_clients_overdue(df_cli, 10)
+        if not top_det.empty:
+            top_disp = top_det.copy()
+            for col in ["j60_plus", "j30_59", "j0_29", "montant_total", "total_overdue"]:
+                if col in top_disp.columns:
+                    top_disp[col] = top_disp[col].apply(fmt_rwf)
+            st.dataframe(top_disp, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # FLAGS
+        st.markdown("### 🚨 Flags de risque")
+        flags_det = resume_flags_detailed(df_tx, df_cli)
+        fd1, fd2, fd3, fd4 = st.columns(4)
+        fd1.metric("🔴 Factures impayées ≥60j", f"{flags_det['nb_factures_60j_plus']:,}")
+        fd2.metric("🟠 Paiements sans facture",  f"{flags_det['nb_paiements_sans_facture']}")
+        fd3.metric("🟠 Soldes négatifs",          f"{flags_det['nb_soldes_negatifs']}")
+        fd4.metric("🔴 Échéances >90j",           f"{flags_det['nb_echeances_90j_plus']:,}")
+
+        with st.expander(f"🔴 Factures impayées ≥ 60 jours — {flags_det['nb_factures_60j_plus']:,} lignes",
+                         expanded=False):
+            f60 = flag_factures_impayees_60j(df_tx)
+            if f60.empty:
+                st.markdown('<div class="flag-green">✅ Aucune facture impayée ≥ 60j</div>',
+                            unsafe_allow_html=True)
+            else:
+                st.dataframe(f60.head(50), use_container_width=True, hide_index=True)
+
+        with st.expander(f"🟠 Soldes négatifs — {flags_det['nb_soldes_negatifs']} clients",
+                         expanded=False):
+            f_neg = flag_solde_negatif(df_cli)
+            if f_neg.empty:
+                st.markdown('<div class="flag-green">✅ Aucun solde négatif</div>',
+                            unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="flag-amber">🟠 Avoirs non imputés ou trop-perçus</div>',
+                            unsafe_allow_html=True)
+                st.dataframe(f_neg, use_container_width=True, hide_index=True)
+
+        # Export
+        st.divider()
+        exp_det = exporter_flags_excel({
+            f"Factures_60j_{annee_det}":      flag_factures_impayees_60j(df_tx).head(500),
+            f"Soldes_Negatifs_{annee_det}":   flag_solde_negatif(df_cli),
+            f"Echeances_90j_{annee_det}":     flag_echeances_depassees(df_tx, 90).head(500),
+        })
+        st.download_button("⬇️ Exporter flags Detailed Aged", data=exp_det,
+                           file_name=f"flags_detailed_{annee_det}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ===========================================================================
+# TAB 9 — GENERAL BALANCE
+# ===========================================================================
+with tab_general:
+    st.markdown("### ⚖️ General Balance — Balance générale comptable")
+
+    if data_general is None:
+        st.info("💡 Uploadez le fichier General Balance (.xls) dans le panneau de gauche.")
+        st.markdown(f"""
+        <div style="background:{ORYX_LIGHT}; border-radius:12px; padding:24px; margin-top:16px;">
+            <b>Ce module analyse :</b><br>
+            • Plan de comptes complet avec mouvements débit/crédit<br>
+            • Soldes par classe de comptes (Trésorerie, Stocks, Tiers...)<br>
+            • Vérification de l'équilibre comptable<br>
+            • Détection de comptes à solde inhabituel<br>
+            • Variation YoY par compte
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        annees_gen = data_general["annees"]
+        annee_gen  = st.selectbox("Année", options=annees_gen,
+                                   index=len(annees_gen)-1, key="sel_general")
+        df_gen  = data_general[annee_gen]["comptes"]
+        meta_gen = data_general[annee_gen]["meta"]
+        k_gen   = kpi_general(df_gen)
+
+        st.caption(f"Société : {meta_gen.get('societe', 'RW01')} | Devise : {meta_gen.get('devise', 'RWF')} | {k_gen['nb_comptes']} comptes")
+
+        # KPIs
+        g1, g2, g3, g4, g5 = st.columns(5)
+        g1.metric("📚 Nb comptes",     f"{k_gen['nb_comptes']}")
+        g2.metric("📈 Mvt Débit",      fmt_rwf(k_gen["total_mvt_debit"]))
+        g3.metric("📉 Mvt Crédit",     fmt_rwf(k_gen["total_mvt_credit"]))
+        g4.metric("💰 Solde Débit",    fmt_rwf(k_gen["total_solde_debit"]))
+        g5.metric("⚖️ Équilibré",
+                  "✅ OUI" if k_gen["equilibre"] else "❌ NON",
+                  delta=None)
+
+        if not k_gen["equilibre"]:
+            st.markdown(f'<div class="flag-red">🔴 Écart d\'équilibre : {fmt_rwf(k_gen["ecart_equilibre"])}</div>',
+                        unsafe_allow_html=True)
+
+        st.divider()
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            # Balance par classe
+            bc = balance_par_classe(df_gen)
+            fig_bc = px.bar(bc, x="classe", y="solde_net",
+                           title=f"Solde net par classe — {annee_gen}",
+                           color="solde_net",
+                           color_continuous_scale=["#E74C3C", "#FFFFFF", "#2ECC71"],
+                           text="solde_net")
+            fig_bc.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+            fig_bc.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                                  showlegend=False, margin=dict(t=40),
+                                  xaxis_tickangle=-30)
+            st.plotly_chart(fig_bc, use_container_width=True)
+
+        with col_r:
+            # Top comptes par mouvement
+            top_gen = top_comptes_mouvement(df_gen, 10)
+            fig_top = px.bar(top_gen, x="mvt_total", y="num_compte",
+                            orientation="h",
+                            title="Top 10 comptes par volume mouvement",
+                            color_discrete_sequence=[ORYX_BLUE],
+                            text="description")
+            fig_top.update_traces(textposition="outside")
+            fig_top.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                                   yaxis={"categoryorder": "total ascending"},
+                                   margin=dict(t=40))
+            st.plotly_chart(fig_top, use_container_width=True)
+
+        # Tableau balance par classe
+        st.markdown('<div class="section-title">Balance par classe de comptes</div>',
+                    unsafe_allow_html=True)
+        bc_disp = bc.copy()
+        for col in ["mvt_debit", "mvt_credit", "mvt_net", "solde_debit", "solde_credit", "solde_net"]:
+            if col in bc_disp.columns:
+                bc_disp[col] = bc_disp[col].apply(fmt_rwf)
+        st.dataframe(bc_disp, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # FLAGS
+        st.markdown("### 🚨 Flags de risque")
+        flags_gen = resume_flags_general(df_gen)
+        fg1, fg2, fg3 = st.columns(3)
+        fg1.metric("🔴 Comptes déséquilibrés",   f"{flags_gen['nb_desequilibres']}")
+        fg2.metric("🟠 Soldes inhabituels",        f"{flags_gen['nb_soldes_inhabituels']}")
+        fg3.metric("🟠 Sans mouvement",            f"{flags_gen['nb_sans_mouvement']}")
+
+        with st.expander(f"🟠 Comptes à solde inhabituel — {flags_gen['nb_soldes_inhabituels']} comptes",
+                         expanded=flags_gen['nb_soldes_inhabituels'] > 0):
+            f_inh = flag_comptes_solde_inhabituel(df_gen)
+            if f_inh.empty:
+                st.markdown('<div class="flag-green">✅ Aucun solde inhabituel</div>',
+                            unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="flag-amber">🟠 Vérifier ces comptes</div>',
+                            unsafe_allow_html=True)
+                st.dataframe(f_inh, use_container_width=True, hide_index=True)
+
+        with st.expander(f"🟠 Comptes sans mouvement — {flags_gen['nb_sans_mouvement']} comptes",
+                         expanded=False):
+            f_sm = flag_comptes_sans_mouvement(df_gen)
+            if f_sm.empty:
+                st.markdown('<div class="flag-green">✅ Tous les comptes ont bougé</div>',
+                            unsafe_allow_html=True)
+            else:
+                st.dataframe(f_sm, use_container_width=True, hide_index=True)
+
+        # YoY variation
+        if len(annees_gen) >= 2:
+            st.divider()
+            st.markdown("### 📈 Variation YoY")
+            a_ref, a_cmp = annees_gen[-2], annees_gen[-1]
+            var = flag_variation_significative(
+                data_general[a_ref]["comptes"],
+                data_general[a_cmp]["comptes"],
+                a_ref, a_cmp, seuil_pct=50.0
+            )
+            st.markdown(f"**{len(var)} comptes** avec variation >50% entre {a_ref} et {a_cmp}")
+            if not var.empty:
+                st.dataframe(var.head(20), use_container_width=True, hide_index=True)
+
+        # Export
+        st.divider()
+        exp_gen = exporter_flags_excel({
+            f"Soldes_Inhabituels_{annee_gen}": flag_comptes_solde_inhabituel(df_gen),
+            f"Sans_Mouvement_{annee_gen}":     flag_comptes_sans_mouvement(df_gen),
+        })
+        st.download_button("⬇️ Exporter flags General Balance", data=exp_gen,
+                           file_name=f"flags_general_{annee_gen}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
