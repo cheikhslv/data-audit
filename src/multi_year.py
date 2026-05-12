@@ -7,25 +7,32 @@ import re
 
 def detecter_annee(nom_fichier: str) -> str:
     """Détecte l'année depuis le nom du fichier Sage X3.
-    Ex: Requêteur_ZFLD_RW01_010124_au_311224.xlsx -> 2024
+    Ex: Requêteur ZFLD RW01 010124 au 311224.xlsx -> 2024
         Requêteur_ZFLD_RW01_010126_au_210426.xlsx -> 2026
     Les dates sont au format JJMMAA (6 chiffres).
     """
-    # Chercher après "_au_" : les 2 derniers chiffres = année sur 2 digits
-    m = re.search(r'_au_\d{4}(\d{2})', nom_fichier, re.IGNORECASE)
+    # Chercher après " au " ou "_au_" : les 2 derniers chiffres = année sur 2 digits
+    m = re.search(r'[\s_]au[\s_]\d{4}(\d{2})', nom_fichier, re.IGNORECASE)
     if m:
         yr = int(m.group(1))
         if 0 <= yr <= 99:
             return str(2000 + yr)
 
-    # Chercher la date de début : _JJMMAA_  → année sur 2 digits
-    m2 = re.search(r'_\d{4}(\d{2})_', nom_fichier)
+    # Chercher la date de fin : 6 chiffres juste avant l'extension
+    m2 = re.search(r'(\d{6})(?:\.\w+)?$', nom_fichier)
     if m2:
-        yr = int(m2.group(1))
+        yr = int(m2.group(1)[-2:])
         if 0 <= yr <= 99:
             return str(2000 + yr)
 
-    # Fallback : chercher un entier 4 chiffres > 2000
+    # Chercher un bloc de 6 chiffres séparé par espace ou underscore
+    m3 = re.search(r'[\s_](\d{6})[\s_]', nom_fichier)
+    if m3:
+        yr = int(m3.group(1)[-2:])
+        if 0 <= yr <= 99:
+            return str(2000 + yr)
+
+    # Fallback : chercher un entier 4 chiffres entre 2000 et 2099
     for tok in re.findall(r'\d{4}', nom_fichier):
         if 2000 <= int(tok) <= 2099:
             return tok

@@ -1,5 +1,5 @@
 """
-Outil d'Audit Interne — Oryx Energies Group
+Audit Analytics — Plateforme d'audit interne
 Dashboard d'analyse Flash Report Sage X3
 """
 
@@ -37,14 +37,14 @@ from general_balance import (
 # Config page
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Oryx Energies — Audit Analytics",
-    page_icon="🛢️",
+    page_title="Audit Analytics",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ---------------------------------------------------------------------------
-# Palette couleurs Oryx
+# Palette couleurs
 # ---------------------------------------------------------------------------
 ORYX_BLUE   = "#003366"
 ORYX_ORANGE = "#FF6600"
@@ -120,62 +120,200 @@ def plot_line(df, x, y, title, color=ORYX_ORANGE):
 
 
 # ---------------------------------------------------------------------------
-# Sidebar — upload fichiers
+# Détection automatique du type de fichier
+# ---------------------------------------------------------------------------
+
+def detecter_type_fichier(nom: str, contenu: bytes) -> str:
+    """Détecte le type de fichier parmi: flash_report, ageing, detailed_aged, general_balance."""
+    import io as _io
+    import re as _re
+
+    nom_l = nom.lower()
+
+    # CSV → toujours Flash Report Sage X3
+    if nom_l.endswith(".csv"):
+        return "flash_report"
+
+    # Lire les noms de feuilles + premières lignes
+    sheet_names = []
+    rows_brutes = []
+
+    try:
+        if nom_l.endswith(".xlsx"):
+            import openpyxl
+            wb = openpyxl.load_workbook(_io.BytesIO(contenu), read_only=True, data_only=True)
+            sheet_names = [s.lower().strip() for s in wb.sheetnames]
+            ws = wb.active
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                rows_brutes.append([str(c).lower().strip() if c is not None else "" for c in row])
+                if i >= 6:
+                    break
+        elif nom_l.endswith(".xls"):
+            import xlrd
+            wb = xlrd.open_workbook(file_contents=contenu)
+            sheet_names = [s.lower().strip() for s in wb.sheet_names()]
+            ws = wb.sheet_by_index(0)
+            for i in range(min(7, ws.nrows)):
+                rows_brutes.append([str(ws.cell(i, j).value).lower().strip() for j in range(ws.ncols)])
+    except Exception:
+        pass
+
+    # Ageing : feuilles nommées par année (ex: "2024", "2025", "2026")
+    annee_sheets = [s for s in sheet_names if _re.fullmatch(r"20\d{2}", s)]
+    if len(annee_sheets) >= 1:
+        # Confirmer avec marqueurs colonnes ageing dans la feuille
+        all_text = " ".join(c for r in rows_brutes for c in r)
+        ageing_score = sum(1 for m in ["courant", "0-30", "31-60", "61-90", "balance", "limite", "exces", "exc"] if m in all_text)
+        if ageing_score >= 2 or len(annee_sheets) >= 2:
+            return "ageing"
+
+    all_text = " ".join(c for r in rows_brutes for c in r)
+
+    # Flash Report Sage X3 : colonnes caractéristiques
+    flash_score = sum(1 for m in ["montant ht", "tiers", "lob", "cogs", "marge", "type facture",
+                                   "sales channel", "designation", "numéro de pièce", "raison sociale"] if m in all_text)
+    if flash_score >= 3:
+        return "flash_report"
+
+    # General Balance : numéros de comptes 5-8 chiffres en colonne A
+    col_a = [r[0] for r in rows_brutes if r]
+    compte_count = sum(1 for v in col_a if _re.fullmatch(r"\d{5,8}(\.0)?", v.replace(" ", "")))
+    if compte_count >= 2:
+        return "general_balance"
+
+    # Ageing (marqueurs forts sans feuille année)
+    ageing_score = sum(1 for m in ["balance totale", "limite credit", "courant", "0-30", "31-60", "61-90"] if m in all_text)
+    if ageing_score >= 2:
+        return "ageing"
+
+    # Detailed Aged Balance : codes transaction dans les cellules
+    detailed_score = sum(1 for m in ["sainv", "jemis", "appay", "revao", "sacrn", "opmtc"] if m in all_text)
+    if detailed_score >= 1:
+        return "detailed_aged"
+
+    # Fallback : si extension xlsx/xls et marqueurs flash partiels → flash
+    if flash_score >= 1:
+        return "flash_report"
+
+    return "flash_report"  # fallback ultime
+
+
+# ---------------------------------------------------------------------------
+# Navigation state
+# ---------------------------------------------------------------------------
+
+if "page" not in st.session_state:
+    st.session_state.page = "vue_generale"
+
+# ---------------------------------------------------------------------------
+# Sidebar — container trick: reserve nav slot at top, fill after uploads
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/1px-transparent.png", width=1)  # placeholder
-    st.markdown(f"## 🛢️ Oryx Energies\n### Audit Analytics")
+    st.markdown("""<div style="padding:12px 14px 10px;border-bottom:1px solid #E8EAF2;margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:28px;height:28px;background:#CC0000;border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="15" height="15" viewBox="0 0 22 22" fill="none">
+            <path d="M4 17 L8 11 L12 14 L16 7 L19 10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="19" cy="10" r="2" fill="white"/>
+            <path d="M3 17 L19 17" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-size:12px;font-weight:800;color:#0A0E1F;letter-spacing:-.02em;">Audit Analytics</div>
+          <div style="font-size:9px;color:#9094A8;font-weight:500;letter-spacing:.04em;text-transform:uppercase;">Plateforme interne</div>
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("""<style>
+section[data-testid="stSidebar"] div[data-testid="stButton"]>button{
+    width:100%;text-align:left;background:transparent;border:none;
+    color:#6B7280;font-size:.82rem;font-weight:500;
+    padding:6px 10px 6px 12px;border-radius:8px;margin:1px 0;box-shadow:none;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"]>button:hover{background:#F0F4FA;color:#0A0E1F;}
+section[data-testid="stSidebar"] div[data-testid="stButton"]>button[kind="primary"]{
+    background:#FFF0F0 !important;color:#CC0000 !important;font-weight:700;
+}
+</style>""", unsafe_allow_html=True)
+
+    # ── Slot réservé pour la nav (s'affiche ici, rempli plus bas) ────────────
+    _nav_slot = st.container()
+
     st.divider()
 
-    st.markdown("**📂 Upload Flash Reports**")
-    st.caption("Uploadez 1 à 3 fichiers (années différentes) pour l'analyse multi-années.")
-
+    # ── Uploads compacts (sans expander pour éviter la perte d'état) ─────────
+    st.markdown('<p style="font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9094A8;margin:0 0 2px 2px;">Flash Reports</p>', unsafe_allow_html=True)
     fichiers = st.file_uploader(
-        "Fichiers Sage X3 (.xlsx / .csv)",
+        "Flash Reports",
         type=["xlsx", "csv"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
-
-    st.divider()
-
     if fichiers:
-        st.markdown("**Fichiers chargés :**")
-        for f in fichiers:
-            annee = detecter_annee(f.name)
-            st.markdown(f"- `{f.name}` → **{annee}**")
+        for _f in fichiers:
+            st.markdown(
+                f'<div style="font-size:.63rem;color:#6B7280;padding:1px 2px;">📄 {_f.name[:26]} → <b>{detecter_annee(_f.name)}</b></div>',
+                unsafe_allow_html=True,
+            )
 
-    st.divider()
-    st.markdown("**📂 Upload Ageing Credit Risk**")
-    st.caption("Fichier Crystal Reports .xls — 1 feuille par année (2024/2025/2026)")
+    st.markdown('<p style="font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9094A8;margin:10px 0 2px 2px;">Ageing Credit Risk</p>', unsafe_allow_html=True)
     fichier_ageing = st.file_uploader(
-        "Ageing Credit Risk (.xls / .xlsx)",
+        "Ageing",
         type=["xls", "xlsx"],
         accept_multiple_files=False,
         label_visibility="collapsed",
         key="ageing_upload",
     )
-    st.divider()
-    st.markdown("**📂 Upload Detailed Aged Balance**")
+
+    st.markdown('<p style="font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9094A8;margin:10px 0 2px 2px;">Detailed Aged Balance</p>', unsafe_allow_html=True)
     fichier_detailed = st.file_uploader(
-        "Detailed Aged Balance (.xls / .xlsx)",
+        "Detailed",
         type=["xls", "xlsx"],
         accept_multiple_files=False,
         label_visibility="collapsed",
         key="detailed_upload",
     )
-    st.divider()
-    st.markdown("**📂 Upload General Balance**")
+
+    st.markdown('<p style="font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9094A8;margin:10px 0 2px 2px;">General Balance</p>', unsafe_allow_html=True)
     fichier_general = st.file_uploader(
-        "General Balance (.xls / .xlsx)",
+        "General Balance",
         type=["xls", "xlsx"],
         accept_multiple_files=False,
         label_visibility="collapsed",
         key="general_upload",
     )
-    st.divider()
-    st.caption("Oryx Energies Group — Internal Audit\nMai 2026")
+
+    st.caption("Audit Analytics · Internal Audit · Mai 2026")
+
+    # ── Remplir le slot nav (apparaît en haut, visible seulement si fichiers) ─
+    with _nav_slot:
+        if fichiers:
+            st.markdown('<p style="font-size:.58rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#9094A8;margin:2px 0 3px 4px;">EXERCICE</p>', unsafe_allow_html=True)
+            for _key, _lbl in [
+                ("vue_generale",  "📊 Vue Générale"),
+                ("clients",       "👥 Clients"),
+                ("flags",         "🚩 Flags Risque"),
+                ("avoirs",        "📋 Avoirs"),
+                ("frais_passage", "🔄 Frais Passage"),
+                ("multi_annees",  "📈 Multi-Années"),
+            ]:
+                _t = "primary" if st.session_state.page == _key else "secondary"
+                if st.button(_lbl, key=f"nav_{_key}", type=_t, use_container_width=True):
+                    st.session_state.page = _key
+
+            st.divider()
+            st.markdown('<p style="font-size:.58rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#9094A8;margin:0 0 3px 4px;">CRÉDIT RISK</p>', unsafe_allow_html=True)
+            for _key, _lbl in [
+                ("ageing",          "⚠️ Ageing Credit"),
+                ("detailed_aged",   "📋 Detailed Aged"),
+                ("general_balance", "⚖️ General Balance"),
+            ]:
+                _t = "primary" if st.session_state.page == _key else "secondary"
+                if st.button(_lbl, key=f"nav_{_key}", type=_t, use_container_width=True):
+                    st.session_state.page = _key
+            st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -183,20 +321,233 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 if not fichiers:
-    st.markdown(f"""
-    <div style="text-align:center; padding: 80px 20px;">
-        <h1 style="color:{ORYX_BLUE}">🛢️ Oryx Energies — Audit Analytics</h1>
-        <p style="font-size:1.1rem; color:#666;">
-            Uploadez un ou plusieurs fichiers Flash Report Sage X3 dans le panneau de gauche<br>
-            pour démarrer l'analyse.
-        </p>
-        <div style="background:{ORYX_LIGHT}; border-radius:12px; padding:24px; margin-top:32px; text-align:left; max-width:500px; margin-left:auto; margin-right:auto;">
-            <b>Formats acceptés :</b> .xlsx, .csv (Sage X3)<br>
-            <b>Multi-années :</b> uploadez jusqu'à 3 fichiers<br>
-            <b>Filiale test :</b> RW01 Rwanda
-        </div>
+    st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+*{box-sizing:border-box;}
+
+/* ── Keyframes ── */
+@keyframes fadeInDown{from{opacity:0;transform:translateY(-16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideCard{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulseDot{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.45)}70%{box-shadow:0 0 0 7px rgba(16,185,129,0)}}
+@keyframes shimmerArrow{0%,100%{transform:translateX(0)}50%{transform:translateX(5px)}}
+@keyframes gridDrift{from{background-position:0 0}to{background-position:40px 40px}}
+@keyframes accentGrow{from{width:0}to{width:28px}}
+@keyframes uploadPulse{0%,100%{border-color:#E8EAF2}50%{border-color:#CC000055}}
+@keyframes iconBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+
+.landing{background:#fff;font-family:'Plus Jakarta Sans',sans-serif;border-radius:12px;overflow:hidden;}
+
+/* ── Topbar ── */
+.topbar{height:56px;background:#fff;border-bottom:1px solid #E8EAF2;display:flex;align-items:center;padding:0 32px;animation:fadeInDown .4s ease both;}
+.logo-area{display:flex;align-items:center;gap:10px;}
+.logo-box{width:34px;height:34px;background:#CC0000;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.logo-name{font-size:0.92rem;font-weight:800;color:#0A0E1F;letter-spacing:-0.02em;}
+.top-sep{width:1px;height:22px;background:#E8EAF2;margin:0 20px;}
+.top-nav{display:flex;gap:0;}
+.top-link{font-size:0.75rem;font-weight:500;color:#9094A8;padding:0 14px;height:56px;display:flex;align-items:center;border-bottom:2px solid transparent;transition:color .2s,border-color .2s;}
+.top-link.active{color:#0A0E1F;font-weight:600;border-bottom-color:#CC0000;}
+.top-sp{flex:1;}
+.top-badge{display:flex;align-items:center;gap:5px;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:20px;padding:4px 11px;font-size:0.62rem;font-weight:600;color:#065F46;margin-right:12px;animation:fadeIn .6s .3s both;}
+.top-badge-dot{width:5px;height:5px;border-radius:50%;background:#10B981;animation:pulseDot 2s ease infinite;}
+.top-btn{background:#CC0000;color:#fff;font-size:0.72rem;font-weight:600;padding:8px 18px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;animation:fadeIn .6s .4s both;transition:background .2s,transform .15s;}
+.top-btn:hover{background:#AA0000;transform:scale(1.03);}
+
+/* ── Hero ── */
+.hero{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 32px 48px;text-align:center;position:relative;overflow:hidden;animation:fadeInUp .5s .1s ease both;}
+.hero-bg{position:absolute;inset:0;background:linear-gradient(180deg,#FFF5F5 0%,#fff 60%);z-index:0;}
+.hero-grid{position:absolute;inset:0;opacity:0.04;background-image:linear-gradient(#CC0000 1px,transparent 1px),linear-gradient(90deg,#CC0000 1px,transparent 1px);background-size:40px 40px;z-index:0;animation:gridDrift 8s linear infinite;}
+.hero-content{position:relative;z-index:1;max-width:600px;}
+.hero-h1{font-size:2.4rem;font-weight:800;color:#0A0E1F;letter-spacing:-0.04em;line-height:1.12;margin-bottom:16px;animation:fadeInUp .55s .2s ease both;}
+.hero-h1 em{color:#CC0000;font-style:normal;}
+.hero-sub{font-size:0.95rem;color:#6B7280;line-height:1.7;margin-bottom:36px;font-weight:400;animation:fadeInUp .55s .3s ease both;}
+.hero-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;animation:fadeInUp .55s .4s ease both;}
+.btn-primary{background:#CC0000;color:#fff;font-size:0.82rem;font-weight:700;padding:12px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:8px;transition:background .2s,transform .15s,box-shadow .2s;}
+.btn-primary:hover{background:#AA0000;transform:translateY(-2px);box-shadow:0 8px 20px rgba(204,0,0,.25);}
+.btn-secondary{background:#fff;color:#0A0E1F;font-size:0.82rem;font-weight:600;padding:12px 28px;border-radius:10px;border:1.5px solid #E8EAF2;display:inline-flex;align-items:center;gap:8px;transition:border-color .2s,transform .15s;}
+.btn-secondary:hover{border-color:#CC0000;transform:translateY(-2px);}
+
+/* ── Stats ── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:0 32px 40px;animation:fadeInUp .55s .35s ease both;}
+.stat-card{background:#F7F8FC;border:1px solid #E8EAF2;border-radius:12px;padding:16px 20px;transition:transform .2s,box-shadow .2s;}
+.stat-card:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(0,0,0,.06);}
+.stat-val{font-family:'DM Mono',monospace;font-size:1.5rem;font-weight:500;color:#0A0E1F;line-height:1;}
+.stat-label{font-size:0.7rem;color:#9094A8;margin-top:5px;font-weight:500;}
+.stat-accent{height:3px;border-radius:2px;margin-top:10px;width:0;animation:accentGrow .6s .6s ease forwards;}
+
+/* ── Modules ── */
+.modules-section{padding:0 32px 32px;}
+.modules-label{font-size:0.62rem;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:#C5C8D8;margin-bottom:16px;animation:fadeIn .5s .45s both;}
+.modules-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+.mod-card{background:#fff;border:1px solid #E8EAF2;border-radius:12px;padding:18px 20px;transition:border-color .2s,transform .2s,box-shadow .2s;animation:slideCard .5s ease both;}
+.mod-card:nth-child(1){animation-delay:.45s}
+.mod-card:nth-child(2){animation-delay:.52s}
+.mod-card:nth-child(3){animation-delay:.59s}
+.mod-card:nth-child(4){animation-delay:.66s}
+.mod-card:nth-child(5){animation-delay:.73s}
+.mod-card:nth-child(6){animation-delay:.80s}
+.mod-card:hover{border-color:#CC0000;transform:translateY(-3px);box-shadow:0 10px 28px rgba(204,0,0,.08);}
+.mod-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;font-size:18px;transition:transform .25s;}
+.mod-card:hover .mod-icon{animation:iconBounce .5s ease;}
+.mod-title{font-size:0.82rem;font-weight:700;color:#0A0E1F;margin-bottom:4px;}
+.mod-sub{font-size:0.7rem;color:#9094A8;line-height:1.5;}
+.mod-badge{display:inline-block;margin-top:8px;font-size:0.6rem;font-weight:700;padding:2px 8px;border-radius:5px;}
+
+/* ── Upload zone ── */
+.upload-zone{margin:0 32px 32px;background:#fff;border:2px dashed #E8EAF2;border-radius:16px;padding:40px 32px;display:flex;flex-direction:column;align-items:center;gap:12px;animation:fadeInUp .5s .85s ease both;animation:uploadPulse 3s ease infinite;}
+.upload-icon-wrap{width:52px;height:52px;background:#FFF0F0;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;animation:iconBounce 2.5s ease infinite;}
+.upload-title{font-size:0.92rem;font-weight:700;color:#0A0E1F;}
+.upload-sub{font-size:0.76rem;color:#9094A8;text-align:center;line-height:1.6;}
+.upload-arrow{font-size:1.1rem;display:inline-block;animation:shimmerArrow 1.4s ease infinite;}
+.upload-formats{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px;}
+.fmt-tag{background:#F7F8FC;border:1px solid #E8EAF2;border-radius:6px;padding:4px 10px;font-size:0.68rem;font-weight:600;color:#6B7280;font-family:'DM Mono',monospace;transition:border-color .2s,color .2s;}
+.fmt-tag:hover{border-color:#CC0000;color:#CC0000;}
+
+/* ── Footer ── */
+.footer{padding:18px 32px;border-top:1px solid #E8EAF2;display:flex;align-items:center;animation:fadeIn .5s 1s ease both;}
+.footer-brand{font-size:0.7rem;color:#C5C8D8;font-weight:500;}
+.footer-sp{flex:1;}
+.footer-links{display:flex;gap:20px;}
+.footer-link{font-size:0.7rem;color:#9094A8;transition:color .2s;}
+.footer-link:hover{color:#CC0000;}
+</style>
+
+<div class="landing">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="logo-area">
+      <div class="logo-box">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+          <path d="M10 2L18 7v6L10 18 2 13V7Z" stroke="white" stroke-width="1.5" fill="none"/>
+          <path d="M6 14L10 6l4 8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <path d="M7.5 11h5" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="logo-name">Audit Analytics</div>
     </div>
-    """, unsafe_allow_html=True)
+    <div class="top-sep"></div>
+    <div class="top-nav">
+      <div class="top-link active">Accueil</div>
+      <div class="top-link">Flash Report</div>
+      <div class="top-link">Crédit Risk</div>
+      <div class="top-link">Comptabilité</div>
+    </div>
+    <div class="top-sp"></div>
+    <div class="top-badge"><div class="top-badge-dot"></div>Système opérationnel</div>
+    <div class="top-btn">📂 Importer</div>
+  </div>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-grid"></div>
+    <div class="hero-content">
+      <h1 class="hero-h1">Votre tableau de bord<br><em>d'audit financier</em></h1>
+      <p class="hero-sub">Importez vos fichiers Sage X3 pour analyser vos ventes,<br>votre risque crédit et votre balance comptable en quelques secondes.</p>
+      <div class="hero-actions">
+        <div class="btn-primary">📂 Commencer l'analyse</div>
+        <div class="btn-secondary">📖 Documentation</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-val">9</div>
+      <div class="stat-label">Modules d'analyse</div>
+      <div class="stat-accent" style="background:#CC0000;"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">3</div>
+      <div class="stat-label">Années comparables</div>
+      <div class="stat-accent" style="background:#2563EB;"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">18+</div>
+      <div class="stat-label">Flags de risque auto</div>
+      <div class="stat-accent" style="background:#D97706;"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">Excel</div>
+      <div class="stat-label">Export tous modules</div>
+      <div class="stat-accent" style="background:#059669;"></div>
+    </div>
+  </div>
+
+  <!-- Modules -->
+  <div class="modules-section">
+    <div class="modules-label">Modules disponibles</div>
+    <div class="modules-grid">
+      <div class="mod-card">
+        <div class="mod-icon" style="background:#FEE2E2;">📊</div>
+        <div class="mod-title">Flash Report</div>
+        <div class="mod-sub">Revenu, marge, volume par LOB, segment et canal de vente</div>
+        <div class="mod-badge" style="background:#FEE2E2;color:#CC0000;">SINV · Compte 31</div>
+      </div>
+      <div class="mod-card">
+        <div class="mod-icon" style="background:#EFF6FF;">👥</div>
+        <div class="mod-title">Analyse Clients</div>
+        <div class="mod-sub">Top clients, concentration, marge décroissante, YoY</div>
+        <div class="mod-badge" style="background:#EFF6FF;color:#2563EB;">Multi-années</div>
+      </div>
+      <div class="mod-card">
+        <div class="mod-icon" style="background:#FFFBEB;">⚠️</div>
+        <div class="mod-title">Flags de Risque</div>
+        <div class="mod-sub">Marge négative, COGS = 0, doublons, concentration client</div>
+        <div class="mod-badge" style="background:#FFFBEB;color:#D97706;">Auto-détection</div>
+      </div>
+      <div class="mod-card">
+        <div class="mod-icon" style="background:#FEE2E2;">⏱️</div>
+        <div class="mod-title">Ageing Credit Risk</div>
+        <div class="mod-sub">Balance par ancienneté, dépassements crédit, garanties expirées</div>
+        <div class="mod-badge" style="background:#FEE2E2;color:#CC0000;">Crystal Reports</div>
+      </div>
+      <div class="mod-card">
+        <div class="mod-icon" style="background:#F3E8FF;">📋</div>
+        <div class="mod-title">Detailed Aged Balance</div>
+        <div class="mod-sub">Factures impayées ≥ 60j, paiements sans facture, soldes négatifs</div>
+        <div class="mod-badge" style="background:#F3E8FF;color:#7C3AED;">Par transaction</div>
+      </div>
+      <div class="mod-card">
+        <div class="mod-icon" style="background:#ECFDF5;">⚖️</div>
+        <div class="mod-title">General Balance</div>
+        <div class="mod-sub">Équilibre comptable, soldes inhabituels, variation YoY</div>
+        <div class="mod-badge" style="background:#ECFDF5;color:#059669;">Plan de comptes</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload zone -->
+  <div class="upload-zone">
+    <div class="upload-icon-wrap">📂</div>
+    <div class="upload-title">Importez vos fichiers pour démarrer <span class="upload-arrow">←</span></div>
+    <div class="upload-sub">Utilisez le panneau de gauche pour charger vos fichiers.<br>L'analyse démarre automatiquement après chargement.</div>
+    <div class="upload-formats">
+      <span class="fmt-tag">.xlsx</span>
+      <span class="fmt-tag">.xls</span>
+      <span class="fmt-tag">.csv</span>
+      <span class="fmt-tag">Flash Report</span>
+      <span class="fmt-tag">Ageing</span>
+      <span class="fmt-tag">Balance</span>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="footer-brand">Audit Analytics · v3.0 · 2025</div>
+    <div class="footer-sp"></div>
+    <div class="footer-links">
+      <div class="footer-link">Documentation</div>
+      <div class="footer-link">Support</div>
+    </div>
+  </div>
+
+</div>
+""", unsafe_allow_html=True)
     st.stop()
 
 # Charger tous les fichiers
@@ -305,161 +656,278 @@ if fichier_general is not None:
         st.sidebar.error(f"Erreur General Balance : {e}")
 
 # ---------------------------------------------------------------------------
-# Onglets principaux
+# CSS — KPI cards + flag mini-row + page header
 # ---------------------------------------------------------------------------
 
-tab_vue, tab_clients, tab_flags, tab_avoirs, tab_fp, tab_yoy, tab_ageing, tab_detailed, tab_general = st.tabs([
-    "📊 Vue Générale",
-    "👥 Clients",
-    "🚨 Flags de Risque",
-    "📋 Avoirs (CRM)",
-    "🔄 Frais de Passage",
-    "📈 Multi-Années",
-    "⚠️ Ageing Credit Risk",
-    "📋 Detailed Aged Balance",
-    "⚖️ General Balance",
-])
+st.markdown("""<style>
+.kpi-card{background:#fff;border:1px solid #E8EAF2;border-radius:12px;padding:18px 20px 14px;position:relative;overflow:hidden;height:100%;}
+.kpi-label{font-size:.68rem;font-weight:500;color:#9094A8;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;}
+.kpi-val{font-size:1.5rem;font-weight:700;color:#0A0E1F;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.kpi-delta-pos{font-size:.68rem;font-weight:700;color:#059669;background:#ECFDF5;padding:2px 8px;border-radius:5px;margin-top:7px;display:inline-block;}
+.kpi-delta-neg{font-size:.68rem;font-weight:700;color:#CC0000;background:#FEE2E2;padding:2px 8px;border-radius:5px;margin-top:7px;display:inline-block;}
+.kpi-delta-neu{font-size:.68rem;font-weight:600;color:#9094A8;background:#F7F8FC;padding:2px 8px;border-radius:5px;margin-top:7px;display:inline-block;}
+.kpi-bar{position:absolute;bottom:0;left:0;right:0;height:3px;}
+.flag-mini{display:inline-flex;align-items:center;gap:6px;background:#F7F8FC;border:1px solid #E8EAF2;border-radius:8px;padding:5px 12px;font-size:.72rem;font-weight:600;color:#444;white-space:nowrap;}
+.flag-dot-r{width:7px;height:7px;border-radius:50%;background:#E74C3C;flex-shrink:0;}
+.flag-dot-a{width:7px;height:7px;border-radius:50%;background:#F39C12;flex-shrink:0;}
+.flag-dot-g{width:7px;height:7px;border-radius:50%;background:#2ECC71;flex-shrink:0;}
+.page-header{display:flex;align-items:baseline;gap:10px;margin-bottom:6px;}
+.page-title{font-size:1.4rem;font-weight:800;color:#0A0E1F;letter-spacing:-.02em;}
+.page-sub{font-size:.8rem;color:#9094A8;font-weight:400;}
+</style>""", unsafe_allow_html=True)
 
 
-# ===========================================================================
-# TAB 1 — VUE GÉNÉRALE
-# ===========================================================================
-with tab_vue:
-    st.markdown(f"### Vue générale — Flash Report {annee_principale}")
-    st.caption(f"Source : {all_data[annee_principale]['nom']} · Périmètre : SINV compte 31 (vraies ventes uniquement)")
+# ---------------------------------------------------------------------------
+# Helper functions — new nav
+# ---------------------------------------------------------------------------
 
-    if df.empty:
-        st.warning("Aucune ligne de vente (SINV compte 31) dans ce fichier.")
+def kpi_html(label, value, delta_pct=None, vs_year=None, bar_color="#CC0000"):
+    if delta_pct is not None and vs_year:
+        sign = "+" if delta_pct >= 0 else ""
+        cls = "kpi-delta-pos" if delta_pct >= 0 else "kpi-delta-neg"
+        delta_html = f'<div class="{cls}">{sign}{delta_pct:.1f}% vs {vs_year}</div>'
     else:
-        kpis = kpi_generaux(df)
+        delta_html = '<div class="kpi-delta-neu">— Année unique</div>'
+    return (f'<div class="kpi-card"><div class="kpi-label">{label}</div>'
+            f'<div class="kpi-val">{value}</div>{delta_html}'
+            f'<div class="kpi-bar" style="background:{bar_color};"></div></div>')
 
-        # KPIs principaux
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("💰 Revenu total", fmt_rwf(kpis["revenu_total"]))
-        c2.metric("📦 Volume total", f"{kpis['volume_total']:,.0f} L")
-        c3.metric("📈 Marge %", fmt_pct(kpis["marge_pct_globale"]),
-                  help="Calculée sur les lignes COGS > 0 uniquement")
-        c4.metric("💵 Marge totale", fmt_rwf(kpis["marge_totale"]))
-        c5.metric("🧾 Transactions", f"{kpis['nb_transactions']:,}")
 
+def _dpct(curr, prev):
+    if prev and abs(prev) > 0:
+        return (curr - prev) / abs(prev) * 100
+    return None
+
+
+def year_pills(key, include_yoy=True):
+    opts = annees_dispo + (["YoY"] if include_yoy and len(annees_dispo) > 1 else [])
+    return st.radio("", opts, index=len(annees_dispo) - 1, horizontal=True,
+                    label_visibility="collapsed", key=f"yr_{key}")
+
+
+page = st.session_state.page
+
+
+# ===========================================================================
+# PAGE — VUE GÉNÉRALE
+# ===========================================================================
+if page == "vue_generale":
+    col_h, col_y = st.columns([3, 1])
+    with col_h:
+        st.markdown('<div class="page-header"><span class="page-title">Vue Générale</span><span class="page-sub">Flash Report · Sage X3 · SINV Compte 31</span></div>', unsafe_allow_html=True)
+    with col_y:
+        annee_sel_vue = year_pills("vue")
+
+    if annee_sel_vue == "YoY":
+        kpis_annees = {a: kpi_annee(dfs_ventes[a], a) for a in annees_dispo}
+        st.markdown("#### KPIs clés par année")
+        cols_a = st.columns(len(annees_dispo))
+        for i, annee in enumerate(annees_dispo):
+            k = kpis_annees[annee]
+            cols_a[i].metric(f"**{annee}**", fmt_rwf(k["revenu"]))
+            cols_a[i].caption(f"Marge : {k['marge_pct']}% | {k['nb_tx']:,} tx | {k['nb_mois']} mois")
+        for annee in annees_dispo:
+            if kpis_annees[annee]["annualise"]:
+                st.warning(f"⚠️ **{annee}** : données partielles ({kpis_annees[annee]['nb_mois']} mois).")
         st.divider()
+        lob_yoy = yoy_par_lob(dfs_ventes)
+        if not lob_yoy.empty:
+            st.markdown("#### Revenu par LOB — YoY")
+            fig_yoy_lob = go.Figure()
+            colors_yoy = [ORYX_BLUE, ORYX_ORANGE, "#2ECC71"]
+            for i, annee in enumerate(annees_dispo):
+                if annee in lob_yoy.columns:
+                    fig_yoy_lob.add_trace(go.Bar(
+                        name=annee, x=lob_yoy["lob"], y=lob_yoy[annee],
+                        marker_color=colors_yoy[i % len(colors_yoy)],
+                        text=lob_yoy[annee].apply(lambda v: f"{v/1e9:.1f}Mrd"),
+                        textposition="outside",
+                    ))
+            fig_yoy_lob.update_layout(barmode="group", plot_bgcolor="white", paper_bgcolor="white",
+                title="Revenu par LOB — YoY", margin=dict(t=40))
+            st.plotly_chart(fig_yoy_lob, width="stretch")
+        seg_yoy = yoy_par_segment(dfs_ventes)
+        if not seg_yoy.empty:
+            st.markdown("#### Volume par Segment — YoY")
+            fig_yoy_seg = go.Figure()
+            for i, annee in enumerate(annees_dispo):
+                if annee in seg_yoy.columns:
+                    fig_yoy_seg.add_trace(go.Bar(
+                        name=annee, x=seg_yoy["segment"], y=seg_yoy[annee],
+                        marker_color=colors_yoy[i % len(colors_yoy)],
+                    ))
+            fig_yoy_seg.update_layout(barmode="group", plot_bgcolor="white", paper_bgcolor="white",
+                title="Volume par Segment — YoY", margin=dict(t=40))
+            st.plotly_chart(fig_yoy_seg, width="stretch")
+        if len(annees_dispo) >= 2:
+            a_ref = annees_dispo[-2]; a_cmp = annees_dispo[-1]
+            st.markdown(f"#### Évolution clients — {a_ref} → {a_cmp}")
+            evol = evolution_clients(dfs_ventes[a_ref], dfs_ventes[a_cmp], a_ref, a_cmp)
+            if evol:
+                e1, e2, e3, e4 = st.columns(4)
+                e1.metric("🆕 Nouveaux", len(evol.get("nouveaux", [])))
+                e2.metric("❌ Disparus", len(evol.get("disparus", [])))
+                e3.metric("📈 Forte hausse ≥50%", len(evol.get("croissants", [])))
+                e4.metric("📉 Forte baisse ≤-30%", len(evol.get("en_baisse", [])))
+                col_l, col_r = st.columns(2)
+                with col_l:
+                    if not evol["croissants"].empty:
+                        st.markdown("**Top clients en hausse**")
+                        st.dataframe(evol["croissants"].head(10), use_container_width=True, hide_index=True)
+                with col_r:
+                    if not evol["en_baisse"].empty:
+                        st.markdown("**Clients en baisse significative**")
+                        st.dataframe(evol["en_baisse"].head(10), use_container_width=True, hide_index=True)
+    else:
+        annee_vue = annee_sel_vue
+        df_vue = dfs_ventes[annee_vue]
+        st.caption(f"Source : {all_data[annee_vue]['nom']} · Périmètre : SINV compte 31 (vraies ventes uniquement)")
 
-        # Tendance mensuelle
-        tend = tendance_mensuelle(df)
-        if not tend.empty:
-            col_g, col_d = st.columns(2)
-            with col_g:
-                fig_tend = plot_line(tend, "mois", "revenu",
-                                     f"Tendance mensuelle du revenu — {annee_principale}")
-                fig_tend.update_traces(
-                    text=[fmt_rwf(v) for v in tend["revenu"]],
-                    textposition="top center", mode="lines+markers+text",
-                    textfont_size=10,
-                )
-                st.plotly_chart(fig_tend, use_container_width=True)
+        if df_vue.empty:
+            st.warning("Aucune ligne de vente (SINV compte 31) dans ce fichier.")
+        else:
+            kpis = kpi_generaux(df_vue)
+            idx = annees_dispo.index(annee_vue)
+            annee_prev = annees_dispo[idx - 1] if idx > 0 else None
+            kpis_prev = kpi_generaux(dfs_ventes[annee_prev]) if annee_prev else None
 
-            with col_d:
-                lob_df = revenu_par_lob(df)
-                if not lob_df.empty:
-                    fig_lob = px.bar(lob_df, x="lob", y="revenu",
-                                     title="Revenu par LOB",
-                                     color="marge_pct",
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.markdown(kpi_html("Revenu Total", fmt_rwf(kpis["revenu_total"]),
+                    _dpct(kpis["revenu_total"], kpis_prev["revenu_total"] if kpis_prev else None),
+                    annee_prev), unsafe_allow_html=True)
+            with c2:
+                st.markdown(kpi_html("Volume Total", f"{kpis['volume_total']:,.0f} L",
+                    _dpct(kpis["volume_total"], kpis_prev["volume_total"] if kpis_prev else None),
+                    annee_prev, bar_color="#2563EB"), unsafe_allow_html=True)
+            with c3:
+                st.markdown(kpi_html("Marge %", fmt_pct(kpis["marge_pct_globale"]),
+                    _dpct(kpis["marge_pct_globale"], kpis_prev["marge_pct_globale"] if kpis_prev else None),
+                    annee_prev, bar_color="#059669"), unsafe_allow_html=True)
+            with c4:
+                st.markdown(kpi_html("Transactions", f"{kpis['nb_transactions']:,}",
+                    _dpct(kpis["nb_transactions"], kpis_prev["nb_transactions"] if kpis_prev else None),
+                    annee_prev, bar_color="#D97706"), unsafe_allow_html=True)
+
+            neg_df_vg = flag_marge_negative(df_vue)
+            cogs_df_vg = flag_cogs_zero(df_vue)
+            dup_df_vg = flag_doublons(df_vue)
+            conc_vg = flag_concentration_client(df_vue)
+            dec_df_vg = flag_marge_decroissante(df_vue)
+            neg_n = len(neg_df_vg); cogs_n = len(cogs_df_vg)
+            dup_n = len(dup_df_vg); dec_n = len(dec_df_vg)
+            st.markdown(f"""<div style="display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 18px;">
+  <div class="flag-mini"><div class="flag-dot-{'r' if neg_n>0 else 'g'}"></div>{neg_n} Marge négative</div>
+  <div class="flag-mini"><div class="flag-dot-{'r' if cogs_n>0 else 'g'}"></div>{cogs_n} COGS = 0</div>
+  <div class="flag-mini"><div class="flag-dot-{'a' if dup_n>0 else 'g'}"></div>{dup_n} Doublons</div>
+  <div class="flag-mini"><div class="flag-dot-a"></div>{conc_vg.get('pct_top3',0)}% Top 3</div>
+  <div class="flag-mini"><div class="flag-dot-{'a' if dec_n>0 else 'g'}"></div>{dec_n} Marge décroissante</div>
+</div>""", unsafe_allow_html=True)
+
+            st.divider()
+
+            tend = tendance_mensuelle(df_vue)
+            if not tend.empty:
+                col_g, col_d = st.columns(2)
+                with col_g:
+                    fig_tend = plot_line(tend, "mois", "revenu",
+                                         f"Tendance mensuelle du revenu — {annee_vue}")
+                    fig_tend.update_traces(
+                        text=[fmt_rwf(v) for v in tend["revenu"]],
+                        textposition="top center", mode="lines+markers+text",
+                        textfont_size=10,
+                    )
+                    st.plotly_chart(fig_tend, width="stretch")
+                with col_d:
+                    lob_df = revenu_par_lob(df_vue)
+                    if not lob_df.empty:
+                        fig_lob = px.bar(lob_df, x="lob", y="revenu",
+                                         title="Revenu par LOB", color="marge_pct",
+                                         color_continuous_scale=["#E74C3C", "#F39C12", "#2ECC71"],
+                                         text="revenu")
+                        fig_lob.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+                        fig_lob.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                                              coloraxis_colorbar_title="Marge %",
+                                              margin=dict(t=40, b=20))
+                        st.plotly_chart(fig_lob, width="stretch")
+
+            st.divider()
+
+            col_l, col_r = st.columns(2)
+            with col_l:
+                seg_df = revenu_par_segment(df_vue)
+                if not seg_df.empty:
+                    fig_seg = px.bar(seg_df, x="revenu", y="segment", orientation="h",
+                                     title="Revenu par Segment", color="marge_pct",
                                      color_continuous_scale=["#E74C3C", "#F39C12", "#2ECC71"],
                                      text="revenu")
-                    fig_lob.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-                    fig_lob.update_layout(plot_bgcolor="white", paper_bgcolor="white",
-                                          coloraxis_colorbar_title="Marge %",
+                    fig_seg.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+                    fig_seg.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                                          yaxis={"categoryorder": "total ascending"},
                                           margin=dict(t=40, b=20))
-                    st.plotly_chart(fig_lob, use_container_width=True)
-
-        st.divider()
-
-        col_l, col_r = st.columns(2)
-        with col_l:
-            seg_df = revenu_par_segment(df)
-            if not seg_df.empty:
-                fig_seg = px.bar(seg_df, x="revenu", y="segment", orientation="h",
-                                 title="Revenu par Segment",
-                                 color="marge_pct",
-                                 color_continuous_scale=["#E74C3C", "#F39C12", "#2ECC71"],
-                                 text="revenu")
-                fig_seg.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-                fig_seg.update_layout(plot_bgcolor="white", paper_bgcolor="white",
-                                      yaxis={"categoryorder": "total ascending"},
-                                      margin=dict(t=40, b=20))
-                st.plotly_chart(fig_seg, use_container_width=True)
-
-        with col_r:
-            canal_df = revenu_par_canal(df)
-            if not canal_df.empty:
-                fig_canal = px.bar(canal_df, x="canal", y="revenu",
-                                   title="Revenu par Canal de Vente",
-                                   color_discrete_sequence=[ORYX_BLUE],
-                                   text="revenu")
-                fig_canal.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-                fig_canal.update_layout(plot_bgcolor="white", paper_bgcolor="white",
-                                        margin=dict(t=40, b=20))
-                st.plotly_chart(fig_canal, use_container_width=True)
+                    st.plotly_chart(fig_seg, width="stretch")
+            with col_r:
+                canal_df = revenu_par_canal(df_vue)
+                if not canal_df.empty:
+                    fig_canal = px.bar(canal_df, x="canal", y="revenu",
+                                       title="Revenu par Canal de Vente",
+                                       color_discrete_sequence=[ORYX_BLUE], text="revenu")
+                    fig_canal.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+                    fig_canal.update_layout(plot_bgcolor="white", paper_bgcolor="white",
+                                            margin=dict(t=40, b=20))
+                    st.plotly_chart(fig_canal, width="stretch")
 
 
 # ===========================================================================
-# TAB 2 — CLIENTS
+# PAGE — CLIENTS
 # ===========================================================================
-with tab_clients:
-    st.markdown(f"### Analyse clients — {annee_principale}")
-    st.caption("Périmètre : SINV compte 31 uniquement")
+elif page == "clients":
+    col_h, col_y = st.columns([3, 1])
+    with col_h:
+        st.markdown('<div class="page-header"><span class="page-title">Clients</span><span class="page-sub">Top clients · Concentration · Marges</span></div>', unsafe_allow_html=True)
+    with col_y:
+        annee_cli = year_pills("cli", include_yoy=False)
+    df_cli = dfs_ventes[annee_cli]
+    st.caption(f"Périmètre : SINV compte 31 · {all_data[annee_cli]['nom']}")
 
-    if df.empty:
+    if df_cli.empty:
         st.warning("Aucune donnée disponible.")
     else:
-        top10 = top_clients(df, n=10)
-        conc  = flag_concentration_client(df)
+        top10 = top_clients(df_cli, n=10)
+        conc  = flag_concentration_client(df_cli)
 
         col_t, col_p = st.columns([3, 2])
-
         with col_t:
             st.markdown('<div class="section-title">Top 10 clients par revenu</div>', unsafe_allow_html=True)
             if not top10.empty:
-                # Formatage affichage
                 top10_disp = top10.copy()
                 top10_disp["revenu"] = top10_disp["revenu"].apply(fmt_rwf)
                 top10_disp["marge"] = top10_disp["marge"].apply(fmt_rwf)
                 top10_disp["marge_pct"] = top10_disp["marge_pct"].apply(lambda x: f"{x:.1f}%")
                 cols_show = [c for c in ["raison_sociale", "tiers", "revenu", "marge_pct", "marge", "nb_transactions"] if c in top10_disp.columns]
                 st.dataframe(top10_disp[cols_show], use_container_width=True, hide_index=True)
-
         with col_p:
             st.markdown('<div class="section-title">Concentration client</div>', unsafe_allow_html=True)
             if conc:
-                pct = conc["pct_top3"]
-                seuil = conc["seuil"]
-                flag_on = conc["flag"]
-
+                pct = conc["pct_top3"]; seuil = conc["seuil"]; flag_on = conc["flag"]
                 niveau = "red" if flag_on else "green"
                 label  = f"⚠️ {pct}% > seuil {seuil}%" if flag_on else f"✅ {pct}% < seuil {seuil}%"
                 st.markdown(f'<div class="flag-{niveau}">{label}</div>', unsafe_allow_html=True)
-
                 top3 = conc["top3"]
-                rev_total = df["montant_ht"].sum()
+                rev_total = df_cli["montant_ht"].sum()
                 rev_top3  = top3["revenu"].sum()
-                rev_reste = rev_total - rev_top3
-
                 pie_data = pd.concat([
                     top3.rename(columns={"client": "label", "revenu": "valeur"}),
-                    pd.DataFrame([{"label": "Autres clients", "valeur": rev_reste}])
+                    pd.DataFrame([{"label": "Autres clients", "valeur": rev_total - rev_top3}])
                 ], ignore_index=True)
-
-                fig_pie = px.pie(pie_data, names="label", values="valeur",
-                                 title="Top 3 vs reste",
+                fig_pie = px.pie(pie_data, names="label", values="valeur", title="Top 3 vs reste",
                                  color_discrete_sequence=[ORYX_ORANGE, "#FF9944", "#FFCC88", "#CCDDEE"])
                 fig_pie.update_layout(paper_bgcolor="white", margin=dict(t=40, b=10))
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width="stretch")
 
         st.divider()
-
-        # Clients marge négative
         st.markdown('<div class="section-title">Clients avec marge négative</div>', unsafe_allow_html=True)
-        neg = flag_marge_negative(df)
+        neg = flag_marge_negative(df_cli)
         if neg.empty:
             st.markdown('<div class="flag-green">✅ Aucun client à marge négative</div>', unsafe_allow_html=True)
         else:
@@ -467,11 +935,8 @@ with tab_clients:
             st.dataframe(neg, use_container_width=True, hide_index=True)
 
         st.divider()
-
-        # Marge décroissante
         st.markdown('<div class="section-title">Clients avec marge décroissante (≥ 2 mois consécutifs)</div>', unsafe_allow_html=True)
-        from flags import flag_marge_decroissante
-        dec = flag_marge_decroissante(df)
+        dec = flag_marge_decroissante(df_cli)
         if dec.empty:
             st.markdown('<div class="flag-green">✅ Aucune tendance décroissante détectée</div>', unsafe_allow_html=True)
         else:
@@ -480,32 +945,35 @@ with tab_clients:
 
 
 # ===========================================================================
-# TAB 3 — FLAGS DE RISQUE
+# PAGE — FLAGS DE RISQUE
 # ===========================================================================
-with tab_flags:
-    st.markdown(f"### Flags de risque — {annee_principale}")
-    st.caption("Périmètre : SINV compte 31 · Chaque tableau est exportable en Excel")
+elif page == "flags":
+    col_h, col_y = st.columns([3, 1])
+    with col_h:
+        st.markdown('<div class="page-header"><span class="page-title">Flags de Risque</span><span class="page-sub">Marge · COGS · Doublons · Concentration</span></div>', unsafe_allow_html=True)
+    with col_y:
+        annee_flg = year_pills("flg", include_yoy=False)
+    df_flg = dfs_ventes[annee_flg]
+    st.caption(f"Périmètre : SINV compte 31 · {all_data[annee_flg]['nom']}")
 
-    if df.empty:
+    if df_flg.empty:
         st.warning("Aucune donnée disponible.")
     else:
-        neg_df  = flag_marge_negative(df)
-        cogs_df = flag_cogs_zero(df)
-        dup_df  = flag_doublons(df)
-        conc    = flag_concentration_client(df)
-        dec_df  = flag_marge_decroissante(df)
+        neg_df  = flag_marge_negative(df_flg)
+        cogs_df = flag_cogs_zero(df_flg)
+        dup_df  = flag_doublons(df_flg)
+        conc    = flag_concentration_client(df_flg)
+        dec_df  = flag_marge_decroissante(df_flg)
 
-        # Résumé flags
         f1, f2, f3, f4, f5 = st.columns(5)
-        f1.metric("🔴 Marge négative",    len(neg_df),  delta=None)
-        f2.metric("🔴 COGS = 0",          len(cogs_df), delta=None)
-        f3.metric("🟠 Doublons factures", len(dup_df),  delta=None)
-        f4.metric("🟠 Concentration",     f"{conc.get('pct_top3', 0)}%", delta=None)
-        f5.metric("🟠 Marge décroissante",len(dec_df),  delta=None)
+        f1.metric("🔴 Marge négative",    len(neg_df))
+        f2.metric("🔴 COGS = 0",          len(cogs_df))
+        f3.metric("🟠 Doublons factures", len(dup_df))
+        f4.metric("🟠 Concentration",     f"{conc.get('pct_top3', 0)}%")
+        f5.metric("🟠 Marge décroissante",len(dec_df))
 
         st.divider()
 
-        # --- Flag 1 : Marge négative ---
         with st.expander(f"🔴 Marge négative — {len(neg_df)} transactions", expanded=len(neg_df) > 0):
             if neg_df.empty:
                 st.markdown('<div class="flag-green">✅ Aucune transaction à marge négative</div>', unsafe_allow_html=True)
@@ -513,7 +981,6 @@ with tab_flags:
                 st.markdown('<div class="flag-red">🔴 Transactions avec marge totale < 0 — à investiguer</div>', unsafe_allow_html=True)
                 st.dataframe(neg_df, use_container_width=True, hide_index=True)
 
-        # --- Flag 2 : COGS = 0 ---
         with st.expander(f"🔴 COGS = 0 — {len(cogs_df)} lignes", expanded=len(cogs_df) > 0):
             if cogs_df.empty:
                 st.markdown('<div class="flag-green">✅ Aucune anomalie COGS = 0 sur compte 31</div>', unsafe_allow_html=True)
@@ -521,7 +988,6 @@ with tab_flags:
                 st.markdown('<div class="flag-red">🔴 Lignes avec COGS = 0 et CA > 0 — anomalie données Sage</div>', unsafe_allow_html=True)
                 st.dataframe(cogs_df, use_container_width=True, hide_index=True)
 
-        # --- Flag 3 : Doublons ---
         with st.expander(f"🟠 Doublons de factures — {len(dup_df)} lignes", expanded=len(dup_df) > 0):
             if dup_df.empty:
                 st.markdown('<div class="flag-green">✅ Aucun doublon détecté</div>', unsafe_allow_html=True)
@@ -529,16 +995,14 @@ with tab_flags:
                 st.markdown('<div class="flag-amber">🟠 Même Tiers + Montant + Date + Article — vérifier si facturation double</div>', unsafe_allow_html=True)
                 st.dataframe(dup_df, use_container_width=True, hide_index=True)
 
-        # --- Flag 4 : Concentration ---
         with st.expander(f"🟠 Concentration client — Top 3 = {conc.get('pct_top3', 0)}%", expanded=False):
             if conc:
                 flag_c = conc["flag"]
                 niveau = "amber" if flag_c else "green"
-                msg    = f"{'🟠 Concentration élevée' if flag_c else '✅ Concentration normale'} — Top 3 = {conc['pct_top3']}% (seuil : {conc['seuil']}%)"
+                msg = f"{'🟠 Concentration élevée' if flag_c else '✅ Concentration normale'} — Top 3 = {conc['pct_top3']}% (seuil : {conc['seuil']}%)"
                 st.markdown(f'<div class="flag-{niveau}">{msg}</div>', unsafe_allow_html=True)
                 st.dataframe(conc["top3"], use_container_width=True, hide_index=True)
 
-        # --- Flag 5 : Marge décroissante ---
         with st.expander(f"🟠 Marge décroissante — {len(dec_df)} clients", expanded=len(dec_df) > 0):
             if dec_df.empty:
                 st.markdown('<div class="flag-green">✅ Aucun client avec marge en baisse continue</div>', unsafe_allow_html=True)
@@ -547,13 +1011,11 @@ with tab_flags:
                 st.dataframe(dec_df, use_container_width=True, hide_index=True)
 
         st.divider()
-
-        # Export Excel
         st.markdown("**📥 Exporter tous les flags**")
         flags_dict = {
-            "Marge_Negative":    neg_df,
-            "COGS_Zero":         cogs_df,
-            "Doublons":          dup_df,
+            "Marge_Negative":     neg_df,
+            "COGS_Zero":          cogs_df,
+            "Doublons":           dup_df,
             "Concentration_Top3": conc.get("top3", pd.DataFrame()),
             "Marge_Decroissante": dec_df,
         }
@@ -561,19 +1023,25 @@ with tab_flags:
         st.download_button(
             label="⬇️ Télécharger flags en Excel",
             data=excel_bytes,
-            file_name=f"flags_audit_{annee_principale}.xlsx",
+            file_name=f"flags_audit_{annee_flg}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_flags_{annee_flg}",
         )
 
 
 # ===========================================================================
-# TAB 4 — AVOIRS (CRM)
+# PAGE — AVOIRS (CRM)
 # ===========================================================================
-with tab_avoirs:
-    st.markdown(f"### Avoirs (Credit Notes) — {annee_principale}")
+elif page == "avoirs":
+    col_h, col_y = st.columns([3, 1])
+    with col_h:
+        st.markdown('<div class="page-header"><span class="page-title">Avoirs</span><span class="page-sub">Credit Notes · CRM · Hors CA principal</span></div>', unsafe_allow_html=True)
+    with col_y:
+        annee_av = year_pills("av", include_yoy=False)
     st.caption("Périmètre : type facture = CRM · Affiché séparément, non inclus dans les KPIs principaux")
 
-    df_avoirs = all_data[annee_principale]["segments"]["avoirs"]
+    df_avoirs = all_data[annee_av]["segments"]["avoirs"]
+    df_ref_av = dfs_ventes[annee_av]
 
     if df_avoirs.empty:
         st.info("Aucun avoir dans ce fichier.")
@@ -582,7 +1050,7 @@ with tab_avoirs:
         rev_avoirs  = df_avoirs["montant_ht"].sum() if "montant_ht" in df_avoirs.columns else 0
         nb_avoirs   = len(df_avoirs)
         nb_clients  = df_avoirs["tiers"].nunique() if "tiers" in df_avoirs.columns else 0
-        rev_ventes  = df["montant_ht"].sum() if "montant_ht" in df.columns else 1
+        rev_ventes  = df_ref_av["montant_ht"].sum() if "montant_ht" in df_ref_av.columns else 1
         pct_avoirs  = abs(rev_avoirs) / rev_ventes * 100 if rev_ventes else 0
 
         a1, a2, a3, a4 = st.columns(4)
@@ -606,14 +1074,14 @@ with tab_avoirs:
                                 text="montant_ht")
                 fig_av.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
                 fig_av.update_layout(plot_bgcolor="white", paper_bgcolor="white", margin=dict(t=40))
-                st.plotly_chart(fig_av, use_container_width=True)
+                st.plotly_chart(fig_av, width="stretch")
 
             with col_r:
                 if "mois" in df_avoirs.columns:
                     av_mois = df_avoirs.groupby("mois")["montant_ht"].sum().reset_index().sort_values("mois")
                     fig_av_m = plot_line(av_mois, "mois", "montant_ht",
                                          "Évolution mensuelle des avoirs", color=RED)
-                    st.plotly_chart(fig_av_m, use_container_width=True)
+                    st.plotly_chart(fig_av_m, width="stretch")
 
         st.divider()
 
@@ -626,18 +1094,23 @@ with tab_avoirs:
         # Export avoirs
         av_bytes = exporter_flags_excel({"Avoirs_CRM": df_avoirs[cols_av] if cols_av else df_avoirs})
         st.download_button("⬇️ Exporter avoirs en Excel", data=av_bytes,
-                           file_name=f"avoirs_CRM_{annee_principale}.xlsx",
+                           file_name=f"avoirs_CRM_{annee_av}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ===========================================================================
-# TAB 5 — FRAIS DE PASSAGE
+# PAGE — FRAIS DE PASSAGE
 # ===========================================================================
-with tab_fp:
-    st.markdown(f"### Frais de Passage (compte 36) — {annee_principale}")
+elif page == "frais_passage":
+    col_h, col_y = st.columns([3, 1])
+    with col_h:
+        st.markdown('<div class="page-header"><span class="page-title">Frais de Passage</span><span class="page-sub">Compte 36 · Flux de transit</span></div>', unsafe_allow_html=True)
+    with col_y:
+        annee_fp_sel = year_pills("fp", include_yoy=False)
     st.caption("Périmètre : SINV compte 36 · Flux de transit — exclus du CA et de la marge principaux")
 
-    df_fp = all_data[annee_principale]["segments"]["frais_passage"]
+    df_fp = all_data[annee_fp_sel]["segments"]["frais_passage"]
+    df_ref_fp = dfs_ventes[annee_fp_sel]
 
     if df_fp.empty:
         st.info("Aucun frais de passage dans ce fichier.")
@@ -645,7 +1118,7 @@ with tab_fp:
         rev_fp     = df_fp["montant_ht"].sum() if "montant_ht" in df_fp.columns else 0
         nb_fp      = len(df_fp)
         nb_cli_fp  = df_fp["tiers"].nunique() if "tiers" in df_fp.columns else 0
-        rev_ventes = df["montant_ht"].sum() if "montant_ht" in df.columns else 1
+        rev_ventes = df_ref_fp["montant_ht"].sum() if "montant_ht" in df_ref_fp.columns else 1
         pct_fp     = rev_fp / (rev_ventes + rev_fp) * 100 if (rev_ventes + rev_fp) else 0
 
         f1, f2, f3, f4 = st.columns(4)
@@ -660,7 +1133,7 @@ with tab_fp:
         st.markdown("""
         <div class="flag-amber">
         ⚠️ <b>Note audit</b> : Les frais de passage (compte 36) représentent des flux de transit 
-        où Oryx est intermédiaire. La marge à 100% est artificielle — pas de COGS réel. 
+        où la société est intermédiaire. La marge à 100% est artificielle — pas de COGS réel. 
         Ces montants ne constituent pas du chiffre d'affaires au sens P&L.
         </div>
         """, unsafe_allow_html=True)
@@ -678,7 +1151,7 @@ with tab_fp:
             fig_fp.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
             fig_fp.update_layout(plot_bgcolor="white", paper_bgcolor="white",
                                  yaxis={"categoryorder": "total ascending"}, margin=dict(t=40))
-            st.plotly_chart(fig_fp, use_container_width=True)
+            st.plotly_chart(fig_fp, width="stretch")
 
         st.divider()
 
@@ -687,15 +1160,15 @@ with tab_fp:
 
         fp_bytes = exporter_flags_excel({"Frais_Passage_C36": df_fp[cols_fp] if cols_fp else df_fp})
         st.download_button("⬇️ Exporter frais de passage", data=fp_bytes,
-                           file_name=f"frais_passage_{annee_principale}.xlsx",
+                           file_name=f"frais_passage_{annee_fp_sel}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ===========================================================================
-# TAB 6 — MULTI-ANNÉES (YoY)
+# PAGE — MULTI-ANNÉES (YoY)
 # ===========================================================================
-with tab_yoy:
-    st.markdown("### Analyse multi-années — Comparaison YoY")
+elif page == "multi_annees":
+    st.markdown('<div class="page-header"><span class="page-title">Multi-Années</span><span class="page-sub">Comparaison YoY · Flash Report</span></div>', unsafe_allow_html=True)
 
     if len(annees_dispo) < 2:
         st.info("💡 Uploadez 2 ou 3 fichiers Flash Report (années différentes) pour activer la comparaison YoY.")
@@ -744,7 +1217,7 @@ with tab_yoy:
                 title="Revenu par LOB — YoY", title_font_color=ORYX_BLUE,
                 legend_title="Année", margin=dict(t=40)
             )
-            st.plotly_chart(fig_yoy_lob, use_container_width=True)
+            st.plotly_chart(fig_yoy_lob, width="stretch")
 
         # YoY par segment (volume)
         seg_yoy = yoy_par_segment(dfs_ventes)
@@ -764,7 +1237,7 @@ with tab_yoy:
                 title="Volume (litres) par Segment — YoY", title_font_color=ORYX_BLUE,
                 legend_title="Année", margin=dict(t=40)
             )
-            st.plotly_chart(fig_yoy_seg, use_container_width=True)
+            st.plotly_chart(fig_yoy_seg, width="stretch")
 
         # Évolution clients entre les 2 années les plus récentes
         if len(annees_dispo) >= 2:
@@ -791,10 +1264,10 @@ with tab_yoy:
 
 
 # ===========================================================================
-# TAB 7 — AGEING CREDIT RISK
+# PAGE — AGEING CREDIT RISK
 # ===========================================================================
-with tab_ageing:
-    st.markdown("### ⚠️ Ageing Credit Risk — Analyse du risque crédit")
+elif page == "ageing":
+    st.markdown('<div class="page-header"><span class="page-title">Ageing Credit Risk</span><span class="page-sub">Balance par ancienneté · Dépassements · Garanties</span></div>', unsafe_allow_html=True)
 
     if data_ageing is None:
         st.info("💡 Uploadez le fichier Ageing Credit Risk (.xls) dans le panneau de gauche pour activer cette analyse.")
@@ -859,7 +1332,7 @@ with tab_ageing:
                 showlegend=False, plot_bgcolor="white", paper_bgcolor="white",
                 title_font_color=ORYX_BLUE, margin=dict(t=40, b=20)
             )
-            st.plotly_chart(fig_tr, use_container_width=True)
+            st.plotly_chart(fig_tr, width="stretch")
 
         with col_r:
             # Par LOB
@@ -878,7 +1351,7 @@ with tab_ageing:
                     coloraxis_colorbar_title="% Overdue",
                     title_font_color=ORYX_BLUE, margin=dict(t=40, b=20)
                 )
-                st.plotly_chart(fig_lob_ag, use_container_width=True)
+                st.plotly_chart(fig_lob_ag, width="stretch")
 
         # ── Top clients ──────────────────────────────────────────────────
         st.markdown('<div class="section-title">Top 10 clients par balance</div>', unsafe_allow_html=True)
@@ -995,7 +1468,7 @@ with tab_ageing:
                 legend_title="Indicateur",
                 margin=dict(t=40)
             )
-            st.plotly_chart(fig_yoy_ag, use_container_width=True)
+            st.plotly_chart(fig_yoy_ag, width="stretch")
 
         # ── Export ───────────────────────────────────────────────────────
         st.divider()
@@ -1017,10 +1490,10 @@ with tab_ageing:
 
 
 # ===========================================================================
-# TAB 8 — DETAILED AGED BALANCE
+# PAGE — DETAILED AGED BALANCE
 # ===========================================================================
-with tab_detailed:
-    st.markdown("### 📋 Detailed Aged Balance — Analyse par transaction")
+elif page == "detailed_aged":
+    st.markdown('<div class="page-header"><span class="page-title">Detailed Aged Balance</span><span class="page-sub">Transactions · Factures impayées · Soldes</span></div>', unsafe_allow_html=True)
 
     if data_detailed is None:
         st.info("💡 Uploadez le fichier Detailed Aged Balance (.xls) dans le panneau de gauche.")
@@ -1073,7 +1546,7 @@ with tab_detailed:
             fig_tr.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
             fig_tr.update_layout(showlegend=False, plot_bgcolor="white",
                                   paper_bgcolor="white", margin=dict(t=40))
-            st.plotly_chart(fig_tr, use_container_width=True)
+            st.plotly_chart(fig_tr, width="stretch")
 
         with col_r:
             # Types de transactions
@@ -1085,7 +1558,7 @@ with tab_detailed:
             fig_tx.update_traces(texttemplate="%{text:,}", textposition="outside")
             fig_tx.update_layout(plot_bgcolor="white", paper_bgcolor="white",
                                   margin=dict(t=40))
-            st.plotly_chart(fig_tx, use_container_width=True)
+            st.plotly_chart(fig_tx, width="stretch")
 
         # Top clients overdue
         st.markdown('<div class="section-title">Top 10 clients — Overdue ≥ 60 jours</div>',
@@ -1142,10 +1615,10 @@ with tab_detailed:
 
 
 # ===========================================================================
-# TAB 9 — GENERAL BALANCE
+# PAGE — GENERAL BALANCE
 # ===========================================================================
-with tab_general:
-    st.markdown("### ⚖️ General Balance — Balance générale comptable")
+elif page == "general_balance":
+    st.markdown('<div class="page-header"><span class="page-title">General Balance</span><span class="page-sub">Plan de comptes · Équilibre · Variation YoY</span></div>', unsafe_allow_html=True)
 
     if data_general is None:
         st.info("💡 Uploadez le fichier General Balance (.xls) dans le panneau de gauche.")
@@ -1198,7 +1671,7 @@ with tab_general:
             fig_bc.update_layout(plot_bgcolor="white", paper_bgcolor="white",
                                   showlegend=False, margin=dict(t=40),
                                   xaxis_tickangle=-30)
-            st.plotly_chart(fig_bc, use_container_width=True)
+            st.plotly_chart(fig_bc, width="stretch")
 
         with col_r:
             # Top comptes par mouvement
@@ -1212,7 +1685,7 @@ with tab_general:
             fig_top.update_layout(plot_bgcolor="white", paper_bgcolor="white",
                                    yaxis={"categoryorder": "total ascending"},
                                    margin=dict(t=40))
-            st.plotly_chart(fig_top, use_container_width=True)
+            st.plotly_chart(fig_top, width="stretch")
 
         # Tableau balance par classe
         st.markdown('<div class="section-title">Balance par classe de comptes</div>',
