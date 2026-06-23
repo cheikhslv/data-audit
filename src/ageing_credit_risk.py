@@ -2,8 +2,10 @@
 Module Ageing Credit Risk — Oryx Energies Group
 Analyse du risque crédit par client et par tranche d'ancienneté.
 
-Structure du fichier source (Crystal Reports → .xls converti en .xlsx) :
-  - 1 feuille par année (nommée "2024", "2025", "2026")
+Structure du fichier source (Crystal Reports → .xls) :
+  - soit 1 classeur avec 1 feuille par année (feuille nommée "2024", "2025"...)
+  - soit 1 fichier par année (feuille "Sheet1"), l'année étant lue dans le nom de
+    fichier (ex. "ZCRISKR - 2024.xls") ou, à défaut, dans la date de référence du rapport
   - Ligne 0 : titre + société + date de référence
   - Ligne 1 : header colonnes
   - Lignes 2..N-2 : données clients
@@ -22,6 +24,7 @@ import subprocess
 import zipfile
 import io
 import re
+import datetime
 import tempfile
 import os
 from lxml import etree
@@ -131,7 +134,10 @@ def _parser_feuille(rows_raw: list[dict]) -> tuple[pd.DataFrame, dict]:
     societe       = meta_row.get("D", "")
     date_ref_raw  = meta_row.get("G")
     date_ref = None
-    if date_ref_raw and isinstance(date_ref_raw, (float, int)):
+    if isinstance(date_ref_raw, (datetime.datetime, datetime.date, pd.Timestamp)):
+        # Cellule déjà convertie en date (ctype DATE)
+        date_ref = pd.Timestamp(date_ref_raw)
+    elif date_ref_raw and isinstance(date_ref_raw, (float, int)):
         date_ref = EXCEL_EPOCH + pd.Timedelta(days=int(date_ref_raw))
 
     meta = {
@@ -234,14 +240,28 @@ def _rows_to_dicts(rows_list):
         result.append(rd)
     return result
 
+def _annee_depuis_nom(nom: str) -> str | None:
+    """Extrait une année 20xx depuis un nom de feuille ou de fichier."""
+    m = re.search(r'(20\d{2})', nom or "")
+    return m.group(1) if m else None
+
+
 def charger_ageing(fichier) -> dict:
+    """Charge un fichier Ageing Credit Risk.
+
+    Deux formats supportés :
+      - un classeur avec une feuille par année (feuille nommée "2024", "2025"...)
+      - un fichier unique par année (feuille "Sheet1"), l'année venant du nom de fichier
+        (ex. "ZCRISKR - 2024.xls" -> 2024).
+    """
     import xlrd
-    nom = fichier.name.lower()
+    nom = fichier.name
     contenu = fichier.read()
     resultats = {}
     wb = xlrd.open_workbook(file_contents=contenu)
+    annee_fichier = _annee_depuis_nom(nom)
     for sh in wb.sheets():
-        if sh.name in ('', 'Sheet1', 'Sheet2', 'Sheet3'):
+        if sh.name == '':
             continue
         rows_list = []
         for i in range(sh.nrows):
@@ -257,8 +277,15 @@ def charger_ageing(fichier) -> dict:
             rows_list.append(row)
         rows_raw = _rows_to_dicts(rows_list)
         df, meta = _parser_feuille(rows_raw)
-        if not df.empty:
-            resultats[sh.name] = {'df': df, 'meta': meta}
+        if df.empty:
+            continue
+        # Clé année : nom de feuille s'il contient une année, sinon nom de fichier,
+        # sinon la date de référence du rapport, sinon le nom de feuille brut.
+        cle = (_annee_depuis_nom(sh.name)
+               or annee_fichier
+               or (meta.get("date_ref").strftime("%Y") if meta.get("date_ref") else None)
+               or sh.name)
+        resultats[cle] = {'df': df, 'meta': meta}
     resultats['annees'] = sorted(k for k in resultats.keys() if k != 'annees')
     return resultats
 

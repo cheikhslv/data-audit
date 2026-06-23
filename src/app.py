@@ -262,9 +262,10 @@ section[data-testid="stSidebar"] div[data-testid="stButton"]>button[kind="primar
     fichier_ageing = st.file_uploader(
         "Ageing",
         type=["xls", "xlsx"],
-        accept_multiple_files=False,
+        accept_multiple_files=True,
         label_visibility="collapsed",
         key="ageing_upload",
+        help="Un fichier par année (ex. ZCRISKR - 2024.xls). L'année est lue dans le nom de fichier ou la date de référence.",
     )
 
     st.markdown('<p style="font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9094A8;margin:10px 0 2px 2px;">Detailed Aged Balance</p>', unsafe_allow_html=True)
@@ -606,14 +607,21 @@ def charger_ageing_cache(nom, contenu):
     return charger_ageing(FakeFichier(nom, contenu))
 
 data_ageing = None
-if fichier_ageing is not None:
-    try:
-        contenu_ageing = fichier_ageing.read()
-        data_ageing = charger_ageing_cache(fichier_ageing.name, contenu_ageing)
+# fichier_ageing peut être un fichier unique ou une liste (accept_multiple_files=True)
+_fichiers_ageing = fichier_ageing if isinstance(fichier_ageing, list) else ([fichier_ageing] if fichier_ageing else [])
+if _fichiers_ageing:
+    data_ageing = {}
+    for _fa in _fichiers_ageing:
+        try:
+            _res = charger_ageing_cache(_fa.name, _fa.read())
+            for _an in _res.get("annees", []):
+                data_ageing[_an] = _res[_an]
+        except Exception as e:
+            st.sidebar.error(f"Erreur Ageing ({_fa.name}) : {e}")
+    data_ageing["annees"] = sorted(k for k in data_ageing.keys() if k != "annees")
+    if data_ageing["annees"]:
         with st.sidebar:
             st.markdown(f"**Ageing chargé :** {', '.join(data_ageing['annees'])} ({sum(len(data_ageing[a]['df']) for a in data_ageing['annees'])} clients)")
-    except Exception as e:
-        st.sidebar.error(f"Erreur Ageing : {e}")
 
 # ---------------------------------------------------------------------------
 # Chargement Detailed Aged Balance
@@ -1269,8 +1277,15 @@ elif page == "multi_annees":
 elif page == "ageing":
     st.markdown('<div class="page-header"><span class="page-title">Ageing Credit Risk</span><span class="page-sub">Balance par ancienneté · Dépassements · Garanties</span></div>', unsafe_allow_html=True)
 
-    if data_ageing is None:
-        st.info("💡 Uploadez le fichier Ageing Credit Risk (.xls) dans le panneau de gauche pour activer cette analyse.")
+    if data_ageing is None or not data_ageing.get("annees"):
+        if data_ageing is not None and not data_ageing.get("annees"):
+            st.warning(
+                "⚠️ Le fichier Ageing a été chargé mais aucune feuille exploitable n'a été détectée. "
+                "Vérifiez que les feuilles sont nommées par année (ex. `2024`, `2025`) et qu'elles "
+                "contiennent bien la structure attendue (en-têtes de tranches d'ancienneté)."
+            )
+        else:
+            st.info("💡 Uploadez le fichier Ageing Credit Risk (.xls) dans le panneau de gauche pour activer cette analyse.")
         st.markdown(f"""
         <div style="background:{ORYX_LIGHT}; border-radius:12px; padding:24px; margin-top:16px;">
             <b>Ce module analyse :</b><br>
@@ -1495,8 +1510,11 @@ elif page == "ageing":
 elif page == "detailed_aged":
     st.markdown('<div class="page-header"><span class="page-title">Detailed Aged Balance</span><span class="page-sub">Transactions · Factures impayées · Soldes</span></div>', unsafe_allow_html=True)
 
-    if data_detailed is None:
-        st.info("💡 Uploadez le fichier Detailed Aged Balance (.xls) dans le panneau de gauche.")
+    if data_detailed is None or not data_detailed.get("annees"):
+        if data_detailed is not None and not data_detailed.get("annees"):
+            st.warning("⚠️ Fichier Detailed Aged Balance chargé mais aucune feuille exploitable détectée (feuilles à nommer par année).")
+        else:
+            st.info("💡 Uploadez le fichier Detailed Aged Balance (.xls) dans le panneau de gauche.")
         st.markdown(f"""
         <div style="background:{ORYX_LIGHT}; border-radius:12px; padding:24px; margin-top:16px;">
             <b>Ce module analyse :</b><br>
@@ -1620,8 +1638,11 @@ elif page == "detailed_aged":
 elif page == "general_balance":
     st.markdown('<div class="page-header"><span class="page-title">General Balance</span><span class="page-sub">Plan de comptes · Équilibre · Variation YoY</span></div>', unsafe_allow_html=True)
 
-    if data_general is None:
-        st.info("💡 Uploadez le fichier General Balance (.xls) dans le panneau de gauche.")
+    if data_general is None or not data_general.get("annees"):
+        if data_general is not None and not data_general.get("annees"):
+            st.warning("⚠️ Fichier General Balance chargé mais aucune feuille exploitable détectée (feuilles à nommer par année).")
+        else:
+            st.info("💡 Uploadez le fichier General Balance (.xls) dans le panneau de gauche.")
         st.markdown(f"""
         <div style="background:{ORYX_LIGHT}; border-radius:12px; padding:24px; margin-top:16px;">
             <b>Ce module analyse :</b><br>
